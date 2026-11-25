@@ -1,0 +1,80 @@
+name: 更新并发布政策雷达
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '17 * * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: policy-radar-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: write
+      pages: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: 读取已有资讯归档
+        run: |
+          archive_ref="$(git ls-remote --heads origin refs/heads/feed-archive)"
+          if [[ -n "$archive_ref" ]]; then
+            git fetch origin refs/heads/feed-archive:refs/remotes/origin/feed-archive
+            git worktree add --detach .feed origin/feed-archive
+          else
+            git worktree add --detach .feed HEAD
+            git -C .feed switch --orphan feed-archive
+          fi
+      - name: 采集官方新闻并生成页面数据
+        run: npm run refresh
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          DEEPSEEK_MODEL: ${{ vars.DEEPSEEK_MODEL }}
+      - name: 检查网页脚本
+        run: npm run check
+      - name: 保存资讯归档
+        run: |
+          if [[ -s .feed/archive.json ]]; then
+            git -C .feed add archive.json
+            if ! git -C .feed diff --cached --quiet; then
+              git -C .feed \
+                -c user.name='github-actions[bot]' \
+                -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+                commit -m '更新官方资讯归档'
+              archive_head="$(git -C .feed rev-parse HEAD)"
+              git push origin "$archive_head:refs/heads/feed-archive"
+            fi
+          fi
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 发布到 GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

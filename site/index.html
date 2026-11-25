@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f5f9">
+  <meta name="description" content="政策雷达汇集官方政策、监管动态和产业新闻，提供可检索的资讯库、每日简报和原文链接。">
+  <title>政策雷达 · 政策与市场观察</title>
+  <link rel="icon" href="./favicon.png" type="image/png">
+  <link rel="stylesheet" href="./style.css">
+  <script defer src="./feed-data.js"></script>
+  <script defer src="./app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳至内容</a>
+  <header class="topbar">
+    <div class="shell topbar-inner">
+      <a class="brand" href="#overview">
+        <span class="brand-mark" aria-hidden="true"><i></i></span>
+        <span>政策雷达</span>
+      </a>
+      <nav class="nav" aria-label="主导航">
+        <a href="#overview" data-view="overview" aria-current="page">资讯总览</a>
+        <a href="#archive" data-view="archive">资讯库</a>
+        <a href="#sources" data-view="sources">信源</a>
+      </nav>
+      <span id="feed-mode" class="mode"></span>
+    </div>
+  </header>
+
+  <main class="shell main" id="main">
+    <section class="hero" id="home-hero" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="hero-date"><span class="calendar-icon" aria-hidden="true"></span><time id="hero-day"></time></p>
+        <h1 id="hero-title">政策与市场观察</h1>
+        <p class="hero-description">追踪官方政策、监管动态与产业新闻。</p>
+        <button type="button" class="button button-accent" data-brief>查看当日简报</button>
+      </div>
+      <div class="hero-art" aria-hidden="true">
+        <div class="radar">
+          <span class="sweep"></span>
+          <span class="radar-center"></span>
+          <i class="radar-point point-one"></i>
+          <i class="radar-point point-two"></i>
+          <i class="radar-point point-three"></i>
+        </div>
+      </div>
+    </section>
+
+    <section class="metrics" id="metrics" aria-label="收录和分析概况">
+      <div class="metric"><span class="metric-label">收录资讯</span><strong id="metric-total"></strong></div>
+      <div class="metric"><span class="metric-label">最新一日</span><strong id="metric-day"></strong></div>
+      <div class="metric"><span class="metric-label">官方信源</span><strong id="metric-sources"></strong></div>
+      <div class="metric"><span class="metric-label" id="analysis-label">AI 解读</span><strong id="metric-analysis"></strong></div>
+    </section>
+
+    <header class="page-heading" id="archive-heading" hidden>
+      <h1>资讯库</h1>
+      <p>按日期、来源或主题查阅已收录的官方发布。</p>
+    </header>
+
+    <div class="workspace" id="workspace">
+      <section id="feed-pane" aria-labelledby="feed-heading">
+        <header class="section-heading">
+          <h2 id="feed-heading">政策快讯</h2>
+          <span id="result-count" class="count" aria-live="polite"></span>
+        </header>
+        <div class="filters">
+          <label class="search">
+            <span class="search-icon" aria-hidden="true"></span>
+            <span class="sr-only">搜索资讯</span>
+            <input id="query" type="search" placeholder="搜索标题、内容或行业" spellcheck="false">
+          </label>
+          <label class="select-field"><span class="sr-only">信源</span><select id="source-filter"></select></label>
+          <label class="select-field"><span class="sr-only">主题</span><select id="category-filter"></select></label>
+          <label class="select-field" id="date-field" hidden><span class="sr-only">日期</span><select id="date-filter"></select></label>
+        </div>
+        <div class="feed-list" id="feed-list"></div>
+        <button type="button" id="load-more" class="button button-subtle load-more" hidden>加载更多</button>
+        <noscript><p class="empty">请启用 JavaScript 查看资讯。</p></noscript>
+      </section>
+
+      <aside class="sidebar" id="home-sidebar" aria-label="简报和信源">
+        <section class="brief-card" aria-labelledby="brief-title">
+          <div class="side-heading"><h2 id="brief-title">当日简报</h2><time id="brief-day"></time></div>
+          <ul id="brief-list" class="brief-list"></ul>
+          <button type="button" class="side-action" data-brief>查看完整简报</button>
+        </section>
+        <section class="source-card" aria-labelledby="side-sources-title">
+          <div class="side-heading"><h2 id="side-sources-title">信源状态</h2></div>
+          <ul id="side-sources" class="side-sources"></ul>
+          <a class="side-action" href="#sources">查看全部信源</a>
+        </section>
+      </aside>
+    </div>
+
+    <section id="source-view" hidden aria-labelledby="sources-heading">
+      <header class="page-heading">
+        <h1 id="sources-heading">官方信源</h1>
+        <p>查看各来源的采集状态、收录数量和公开栏目。</p>
+      </header>
+      <p id="source-note" class="source-note"></p>
+      <div class="source-grid" id="source-grid"></div>
+    </section>
+  </main>
+
+  <footer class="shell footer">
+    <span>政策雷达</span>
+    <span id="footer-update"></span>
+  </footer>
+
+  <dialog class="detail-dialog" id="detail-dialog" aria-labelledby="dialog-title">
+    <article class="dialog-body">
+      <div class="dialog-top">
+        <span id="dialog-eyebrow"></span>
+        <form method="dialog"><button class="dialog-close" value="close" aria-label="关闭详情">×</button></form>
+      </div>
+      <h2 id="dialog-title" tabindex="-1"></h2>
+      <div id="dialog-content"></div>
+    </article>
+  </dialog>
+</body>
+</html>
