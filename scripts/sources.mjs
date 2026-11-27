@@ -19,6 +19,7 @@ export const sources = [
   {
     id: "pbc", name: "中国人民银行", shortName: "人民银行", category: "货币与金融",
     url: "https://www.pbc.gov.cn/goutongjiaoliu/113456/113469/index.html",
+    fallbackRss: "https://www.pbc.gov.cn/goutongjiaoliu/113456/2986536/index.html",
     list: "font.newslist_style a[istitle]", container: "td", date: ".hui12", article: "#zoom"
   },
   {
@@ -87,14 +88,25 @@ function htmlRows(html, source) {
   });
 }
 
+function rssRows(body) {
+  const $ = load(body, { xml: true });
+  return $("item").toArray().map(element => {
+    const entry = $(element);
+    const link = clean(entry.find("link").text());
+    const published = Date.parse(entry.find("pubDate").text());
+    const day = Number.isFinite(published)
+      ? new Date(published + 8 * 60 * 60_000).toISOString().slice(0, 10) : "";
+    const url = link.startsWith("www.pbc.gov.cn/") ? "https://" + link : link;
+    return [url, entry.find("title").text(), day];
+  });
+}
+
 async function articleId(url) {
   const hash = await crypto.subtle.digest("SHA-256", encoder.encode(url));
   return Array.from(new Uint8Array(hash, 0, 8), byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export async function collect(source) {
-  const body = await download(source.endpoint ?? source.url);
-  const rows = source.decode ? source.decode(body) : htmlRows(body, source);
+async function collectEntries(rows, source) {
   const entries = new Map();
   for (const [rawUrl, rawTitle, rawDate] of rows) {
     const url = canonical(rawUrl, source);
@@ -106,6 +118,17 @@ export async function collect(source) {
   }
   if (!entries.size) throw new Error("未识别到带日期的文章");
   return Promise.all([...entries.values()].map(async item => ({ id: await articleId(item.url), ...item })));
+}
+
+export async function collect(source) {
+  try {
+    const body = await download(source.endpoint ?? source.url);
+    const rows = source.decode ? source.decode(body) : htmlRows(body, source);
+    return await collectEntries(rows, source);
+  } catch (error) {
+    if (!source.fallbackRss) throw error;
+    return collectEntries(rssRows(await download(source.fallbackRss)), source);
+  }
 }
 
 export async function readArticle(item) {
