@@ -2,57 +2,87 @@ import { beijingDays, collect, sources } from "./sources.mjs";
 import { analyzeWithTicket, prepareAnalyses } from "./article-analysis.mjs";
 
 const origin = "https://9serendipity.github.io";
-const cors = { "Access-Control-Allow-Origin": origin };
 const archiveUrl = "https://raw.githubusercontent.com/9Serendipity/everyday-news/feed-archive/archive.json";
-const apiHeaders = { ...cors, "Cache-Control": "no-store" };
+const apiHeaders = { "Access-Control-Allow-Origin": origin, "Cache-Control": "no-store" };
+const analysisLimit = 50;
 
-async function latestFeed(url, context) {
-  const checkedAt = new Date().toISOString();
-  const days = beijingDays(Date.parse(checkedAt));
-  const cache = globalThis.caches?.default;
-  const cacheUrl = new URL("/latest", url);
-  cacheUrl.searchParams.set("from", days[0]);
-  const cacheKey = new Request(cacheUrl);
-  const cached = await cache?.match(cacheKey).catch(() => undefined);
-  if (cached) return cached;
-
-  const results = await Promise.allSettled(sources.map(source => collect(source, days)));
-  for (const [index, result] of results.entries()) {
-    if (result.status === "rejected") console.warn(sources[index].id + " 查询失败", result.reason?.message);
-  }
-  const sourceStates = sources.map(({ id }, index) => ({
-    id, status: results[index].status === "fulfilled" ? "ok" : "error", checkedAt
-  }));
-  const items = results.flatMap(result => result.status === "fulfilled" ? result.value : []);
-  const allSourcesAvailable = sourceStates.every(source => source.status === "ok");
-  const response = Response.json({ checkedAt, sources: sourceStates, items }, {
-    status: sourceStates.some(source => source.status === "ok") ? 200 : 503,
-    headers: {
-      ...cors,
-      "Cache-Control": allSourcesAvailable ? "public, max-age=60" : "no-store"
-    }
-  });
-  if (cache && allSourcesAvailable) context.waitUntil(cache.put(cacheKey, response.clone()).catch(() => {}));
-  return response;
+function sourceState({ id, name, shortName, url }, status, checkedAt) {
+  return { id, name, shortName, url, status, checkedAt };
 }
 
-async function analysisTickets(url, db, context) {
-  const days = beijingDays();
-  const ids = [...new Set((url.searchParams.get("ids") ?? "").split(","))];
-  if (ids.length > 50 || !ids.every(id => /^[a-f0-9]{16}$/.test(id))) {
+async function storedSnapshot(db) {
+  const data = await db.prepare("SELECT snapshot_json FROM feed_snapshot WHERE id = 1").first("snapshot_json");
+  return data ? JSON.parse(data) : null;
+}
+
+async function archivedSnapshot() {
+  const response = await fetch(archiveUrl, { redirect: "manual", signal: AbortSignal.timeout(5_000) });
+  if (!response.ok) throw new Error("无法读取上次发布的资讯");
+  const { items } = await response.json();
+  const lastDay = items.map(item => item.day).sort().at(-1);
+  return {
+    checkedAt: null,
+    days: lastDay ? beijingDays(Date.parse(lastDay + "T12:00:00+08:00")) : [],
+    sources: sources.map(source => sourceState(source, items.some(item => item.sourceId === source.id) ? "ok" : "pending", null)),
+    items
+  };
+}
+
+async function withSavedAnalyses(db, snapshot, aiEnabled) {
+  const ids = snapshot.items.filter(item => !item.analysis).map(item => item.id);
+  if (!ids.length) return { ...snapshot, aiEnabled };
+  const rows = await db.prepare(
+    "SELECT article_id, result_json FROM article_analysis WHERE result_json IS NOT NULL AND article_id IN (SELECT value FROM json_each(?))"
+  ).bind(JSON.stringify(ids)).all();
+  const saved = new Map(rows.results.map(row => [row.article_id, JSON.parse(row.result_json)]));
+  const items = snapshot.items.map(item => saved.has(item.id) ? { ...item, analysis: saved.get(item.id) } : item);
+  return { ...snapshot, aiEnabled, items };
+}
+
+async function refreshSnapshot(db, aiEnabled) {
+  const checkedAt = new Date().toISOString();
+  const days = beijingDays(Date.parse(checkedAt));
+  const results = await Promise.allSettled(sources.map(source => collect(source, days)));
+  const sourceStates = sources.map((source, index) => {
+    const result = results[index];
+    if (result.status === "rejected") console.warn(source.id + " 查询失败", result.reason?.message);
+    return sourceState(source, result.status === "fulfilled" ? "ok" : "error", checkedAt);
+  });
+  if (sourceStates.every(source => source.status === "error")) return null;
+
+  const previous = await storedSnapshot(db) ?? await archivedSnapshot().catch(() => null);
+  const retained = previous?.items.filter(item => days.includes(item.day)) ?? [];
+  const collected = results.flatMap(result => result.status === "fulfilled" ? result.value : []);
+  const merged = new Map(retained.map(item => [item.id, item]));
+  for (const item of collected) {
+    const older = merged.get(item.id);
+    merged.set(item.id, older?.title === item.title ? { ...older, day: item.day } : item);
+  }
+  const items = [...merged.values()].sort(
+    (first, second) => second.day.localeCompare(first.day) || first.sourceId.localeCompare(second.sourceId)
+  );
+  const snapshot = { checkedAt, days, sources: sourceStates, items };
+  const saved = await db.prepare(
+    "INSERT INTO feed_snapshot (id, checked_at, snapshot_json) VALUES (1, ?, ?) " +
+    "ON CONFLICT (id) DO UPDATE SET checked_at = excluded.checked_at, snapshot_json = excluded.snapshot_json " +
+    "WHERE feed_snapshot.checked_at < excluded.checked_at RETURNING id"
+  ).bind(checkedAt, JSON.stringify(snapshot)).first("id");
+  const current = await withSavedAnalyses(db, saved ? snapshot : await storedSnapshot(db), aiEnabled);
+  const collectedIds = new Set(collected.map(item => item.id));
+  const analysisIds = aiEnabled
+    ? current.items.filter(item => collectedIds.has(item.id) && !item.analysis).slice(0, analysisLimit).map(item => item.id)
+    : [];
+  return { ...current, analysisIds };
+}
+
+async function analysisTickets(url, db) {
+  const ids = new Set((url.searchParams.get("ids") ?? "").split(","));
+  if (ids.size > analysisLimit || ![...ids].every(id => /^[a-f0-9]{16}$/.test(id))) {
     return Response.json({ error: "invalid article ids" }, { status: 400, headers: apiHeaders });
   }
-  const archived = await fetch(archiveUrl, { redirect: "manual", signal: AbortSignal.timeout(8_000) });
-  if (!archived.ok) throw new Error("无法读取资讯归档");
-  const catalog = new Map((await archived.json()).items
-    .filter(item => days.includes(item.day)).map(item => [item.id, item]));
-  if (ids.some(id => !catalog.has(id))) {
-    const latest = await latestFeed(url, context);
-    for (const item of (await latest.json()).items) {
-      if (days.includes(item.day) && !catalog.has(item.id)) catalog.set(item.id, item);
-    }
-  }
-  const items = ids.map(id => catalog.get(id)).filter(Boolean);
+  const snapshot = await storedSnapshot(db);
+  const days = beijingDays();
+  const items = snapshot?.items.filter(item => ids.has(item.id) && days.includes(item.day)) ?? [];
   const ready = items.filter(item => item.analysis).map(({ id, analysis }) => ({ id, analysis }));
   const pending = items.filter(item => !item.analysis);
   return Response.json(await prepareAnalyses(db, pending, ready), { headers: apiHeaders });
@@ -61,24 +91,32 @@ async function analysisTickets(url, db, context) {
 export default {
   async fetch(request, env, context) {
     const url = new URL(request.url);
-    if (url.pathname === "/latest" && request.method === "GET") return latestFeed(url, context);
-    if (!["/analysis-tickets", "/analyse"].includes(url.pathname)) return new Response(null, { status: 404 });
-
+    const route = url.pathname;
+    if (!["/latest", "/refresh", "/analysis-tickets", "/analyse"].includes(route)) return new Response(null, { status: 404 });
     const requestOrigin = request.headers.get("Origin");
     if (requestOrigin && requestOrigin !== origin) return new Response(null, { status: 403 });
-    if (url.pathname === "/analyse" && request.method === "OPTIONS") {
+    if (route === "/analyse" && request.method === "OPTIONS") {
       return new Response(null, {
         status: 204,
-        headers: { ...cors, "Access-Control-Allow-Methods": "POST", "Access-Control-Allow-Headers": "X-Analysis-Ticket" }
+        headers: { ...apiHeaders, "Access-Control-Allow-Methods": "POST", "Access-Control-Allow-Headers": "X-Analysis-Ticket" }
       });
     }
+    if (!env.DB) return new Response(null, { status: 503, headers: apiHeaders });
     const key = env.DEEPSEEK_API_KEY?.trim();
-    if (!env.DB || !key) return new Response(null, { status: 503, headers: apiHeaders });
     try {
-      if (url.pathname === "/analysis-tickets" && request.method === "GET") {
-        return await analysisTickets(url, env.DB, context);
+      if (route === "/latest" && request.method === "GET") {
+        const snapshot = await storedSnapshot(env.DB) ?? await archivedSnapshot();
+        return Response.json(await withSavedAnalyses(env.DB, snapshot, Boolean(key)), { headers: apiHeaders });
       }
-      if (url.pathname === "/analyse" && request.method === "POST") {
+      if (request.method !== "POST") return new Response(null, { status: 405, headers: apiHeaders });
+      if (requestOrigin !== origin) return new Response(null, { status: 403, headers: apiHeaders });
+      if (route === "/refresh") {
+        const result = await refreshSnapshot(env.DB, Boolean(key));
+        return result ? Response.json(result, { headers: apiHeaders }) : new Response(null, { status: 503, headers: apiHeaders });
+      }
+      if (!key) return new Response(null, { status: 503, headers: apiHeaders });
+      if (route === "/analysis-tickets") return await analysisTickets(url, env.DB);
+      if (route === "/analyse") {
         const ticket = request.headers.get("X-Analysis-Ticket");
         if (!/^[a-f0-9-]{36}$/.test(ticket ?? "")) return new Response(null, { status: 403, headers: apiHeaders });
         const job = analyzeWithTicket(env.DB, ticket, { key });
@@ -88,7 +126,7 @@ export default {
       }
       return new Response(null, { status: 405, headers: apiHeaders });
     } catch (error) {
-      console.warn("资讯解读暂不可用", error.message);
+      console.warn("资讯服务暂不可用", error.message);
       return new Response(null, { status: 503, headers: apiHeaders });
     }
   }

@@ -21,15 +21,12 @@
   });
   const directions = { positive: "偏正面", negative: "偏负面", neutral: "中性", unclear: "待观察" };
   const statuses = { ok: "已采集", error: "采集异常", pending: "待采集", demo: "演示" };
-  const liveFeedUrl = "https://policy-radar-live-9serendipity.shadymint257.chatgpt.site/latest";
+  const feedService = "https://policy-radar-live-9serendipity.shadymint257.chatgpt.site";
+  const loadingFeed = "正在读取上次刷新结果…";
   const pageSize = 8;
   let limit = pageSize;
   let currentView = "";
   let previousFocus;
-  let pendingFeedRequest;
-  let publishedFeed;
-  let liveFeed;
-  const liveAnalyses = new Map();
 
   const byId = id => document.getElementById(id);
   const query = byId("query");
@@ -259,13 +256,15 @@
   }
 
   function updateText() {
-    if (feed.mode !== "live" || !feed.generatedAt) return "演示快照";
-    return "最近更新 " + stampFormat.format(new Date(feed.generatedAt)) + "（北京时间）";
+    if (feed.mode !== "live") return "演示快照";
+    if (!feed.generatedAt) return items.length ? "上次发布的资讯" : "尚未刷新";
+    return "上次刷新 " + stampFormat.format(new Date(feed.generatedAt)) + "（北京时间）";
   }
 
   function showFeed(snapshot) {
     feed = snapshot;
-    displayDays = beijingDays();
+    const generatedTime = Date.parse(feed.generatedAt);
+    displayDays = feed.days ?? beijingDays(Number.isFinite(generatedTime) ? generatedTime : Date.now());
     const sourceList = feed.sources;
     sources = new Map(sourceList.map(source => [source.id, source]));
     items = feed.items.filter(item => displayDays.includes(item.day));
@@ -314,172 +313,75 @@
     byId("source-grid").replaceChildren(...tiles);
     byId("source-note").textContent = demo
       ? "正在查看演示快照。各栏目当前状态会随采集结果更新。"
-      : "按北京时间统计今天和昨天发布的资讯。";
+      : "此处显示上次刷新的结果。点「刷新资讯」查询北京时间当天和前一天的发布。";
     byId("footer-update").textContent = updateText();
     if (currentView && currentView !== "sources") renderRecords();
   }
 
-  function loadPublishedFeed() {
-    if (pendingFeedRequest) return pendingFeedRequest;
-    const url = new URL("./feed-data.js", document.baseURI);
-    url.searchParams.set("refresh", String(Date.now()));
-    const previousSnapshot = window.POLICY_FEED;
-    pendingFeedRequest = new Promise((resolve, reject) => {
-      const script = node("script");
-      script.src = url.href;
-      const timer = window.setTimeout(() => finish(reject, new Error("检查更新超时")), 15_000);
-      function finish(settle, value) {
-        window.clearTimeout(timer);
-        script.remove();
-        settle(value);
-      }
-      script.onload = () => {
-        const snapshot = window.POLICY_FEED;
-        if (snapshot !== previousSnapshot && Array.isArray(snapshot?.sources) && Array.isArray(snapshot.items)) {
-          finish(resolve, snapshot);
-        } else {
-          finish(reject, new Error("资讯数据格式错误"));
-        }
-      };
-      script.onerror = () => finish(reject, new Error("无法加载资讯"));
-      document.head.append(script);
-    }).finally(() => { pendingFeedRequest = undefined; });
-    return pendingFeedRequest;
-  }
-
-  async function loadLiveFeed() {
-    const response = await fetch(liveFeedUrl, {
+  async function loadFeed(path, method = "GET") {
+    const response = await fetch(new URL(path, feedService), {
+      method,
       credentials: "omit",
       cache: "no-store",
       redirect: "error",
-      signal: AbortSignal.timeout(15_000)
+      signal: AbortSignal.timeout(method === "POST" ? 22_000 : 8_000)
     });
-    if (!response.ok) throw new Error("无法查询官方信源");
+    if (!response.ok) throw new Error("资讯服务暂不可用");
     const snapshot = await response.json();
-    if (!Number.isFinite(Date.parse(snapshot?.checkedAt)) || !Array.isArray(snapshot.sources)
-      || !Array.isArray(snapshot.items)) throw new Error("实时资讯格式错误");
-    return snapshot;
-  }
-
-  function mergeFeeds() {
-    if (!liveFeed) return publishedFeed;
-    const days = beijingDays();
-    const archivedItems = publishedFeed.mode === "live"
-      ? publishedFeed.items.filter(item => days.includes(item.day)) : [];
-    const merged = new Map(archivedItems.map(item => [item.id, item]));
-    for (const item of liveFeed.items) {
-      if (days.includes(item.day) && !merged.has(item.id)) merged.set(item.id, item);
+    if ((snapshot?.checkedAt !== null && !Number.isFinite(Date.parse(snapshot?.checkedAt)))
+      || !Array.isArray(snapshot.days) || !Array.isArray(snapshot.sources) || !Array.isArray(snapshot.items)) {
+      throw new Error("资讯数据格式有误");
     }
-    const checks = new Map(liveFeed.sources.map(source => [source.id, source]));
-    const sourceList = publishedFeed.sources.map(source => {
-      const check = checks.get(source.id);
-      if (!check || Date.parse(source.checkedAt) > Date.parse(check.checkedAt)) return source;
-      return { ...source, ...check };
-    });
-    const sortedItems = [...merged.values()].map(item => {
-      const analysis = liveAnalyses.get(item.id);
-      return analysis && !item.analysis ? { ...item, analysis } : item;
-    }).sort(
-      (first, second) => second.day.localeCompare(first.day) || first.sourceId.localeCompare(second.sourceId)
-    );
-    const generatedAt = Date.parse(publishedFeed.generatedAt) > Date.parse(liveFeed.checkedAt)
-      ? publishedFeed.generatedAt : liveFeed.checkedAt;
-    return { ...publishedFeed, mode: "live", generatedAt, items: sortedItems, sources: sourceList };
+    return { ...snapshot, mode: "live", generatedAt: snapshot.checkedAt };
   }
 
   async function refreshFeed() {
     if (refreshButton.disabled) return;
-    syncDay();
-    const requestedDays = displayDays;
-    const requestedDay = requestedDays[1];
     refreshButton.disabled = true;
     refreshButton.textContent = "刷新中…";
     refreshStatus.textContent = "正在查询官方信源…";
-    const knownIds = new Set(items.map(item => item.id));
     try {
-      const [published, latest] = await Promise.allSettled([loadPublishedFeed(), loadLiveFeed()]);
-      const snapshot = published.status === "fulfilled" ? published.value : undefined;
-      const publishedUpdated = snapshot?.mode === "live"
-        && Date.parse(snapshot.generatedAt) > (Date.parse(publishedFeed.generatedAt) || 0);
-      if (publishedUpdated) publishedFeed = snapshot;
-      if (requestedDay !== beijingDay()) {
-        syncDay();
-        return;
-      }
-      if (latest.status === "rejected") {
-        if (publishedUpdated) showFeed(mergeFeeds());
-        refreshStatus.textContent = publishedUpdated
-          ? "已加载最新发布的资讯。实时查询暂不可用。"
-          : "实时查询暂不可用，当前显示已收录资讯。";
-        return;
-      }
-
-      const recent = latest.value;
-      const available = new Set(recent.sources.filter(source => source.status === "ok").map(source => source.id));
-      if (!liveFeed || Date.parse(recent.checkedAt) >= Date.parse(liveFeed.checkedAt)) {
-        const retained = liveFeed?.items.filter(
-          item => requestedDays.includes(item.day) && !available.has(item.sourceId)
-        ) ?? [];
-        liveFeed = { ...recent, items: [...recent.items, ...retained] };
-      }
-      showFeed(mergeFeeds());
+      const snapshot = await loadFeed("/refresh", "POST");
+      const knownIds = new Set(items.map(item => item.id));
+      showFeed(snapshot);
       const newItems = items.filter(item => !knownIds.has(item.id)).length;
       const result = newItems ? "新增 " + count.format(newItems) + " 条资讯。"
         : items.length ? "暂无新增资讯。" : "近两日暂无资讯。";
-      const unavailable = recent.sources.length - available.size;
+      const unavailable = snapshot.sources.filter(source => source.status === "error").length;
       const partial = unavailable ? " " + count.format(unavailable) + " 个信源暂未响应。" : "";
       const message = "已刷新。" + result + partial;
-      const recentIds = new Set(recent.items.map(item => item.id));
-      const pending = items.filter(item => recentIds.has(item.id) && !item.analysis).slice(0, 50);
+      const pending = snapshot.analysisIds ?? [];
       refreshStatus.textContent = message;
       if (!pending.length) return;
 
       refreshButton.textContent = "解读中…";
       refreshStatus.textContent = message + " 正在解读 " + count.format(pending.length) + " 条资讯…";
       try {
-        const { requestAnalyses } = await import("./analysis-client.js?v=1");
-        const completed = await requestAnalyses(liveFeedUrl, pending.map(item => item.id), results => {
-          if (requestedDay !== beijingDay()) return;
-          for (const { id, analysis } of results) liveAnalyses.set(id, analysis);
-          showFeed(mergeFeeds());
+        const { requestAnalyses } = await import("./analysis-client.js?v=2");
+        const completed = await requestAnalyses(feedService, pending, results => {
+          const ready = new Map(results.map(({ id, analysis }) => [id, analysis]));
+          showFeed({
+            ...feed,
+            items: feed.items.map(item => ready.has(item.id) ? { ...item, analysis: ready.get(item.id) } : item)
+          });
         });
-        if (requestedDay !== beijingDay()) return;
         const finished = completed ? " 已显示 " + count.format(completed) + " 条 AI 解读。" : "";
-        const later = completed < pending.length ? " 其余解读稍后自动更新。" : "";
+        const later = completed < pending.length ? " 其余解读可在下次手动刷新时重试。" : "";
         refreshStatus.textContent = message + finished + later;
       } catch {
-        if (requestedDay === beijingDay()) refreshStatus.textContent = message + " AI 解读稍后自动更新。";
+        refreshStatus.textContent = message + " 下次手动刷新时可重试 AI 解读。";
       }
     } catch {
-      refreshStatus.textContent = "刷新未完成，请稍后再试。";
+      refreshStatus.textContent = "刷新未完成，当前显示已保存的资讯。";
     } finally {
       refreshButton.disabled = false;
       refreshButton.textContent = "刷新资讯";
     }
   }
 
-  function syncDay() {
-    if (displayDays[1] === beijingDay()) return;
-    if (dialog.open) dialog.close();
-    refreshStatus.textContent = "";
-    showFeed(mergeFeeds());
-    for (const id of liveAnalyses.keys()) {
-      if (!itemsById.has(id)) liveAnalyses.delete(id);
-    }
-  }
-
-  function scheduleMidnight() {
-    const remaining = dayLength - ((Date.now() + beijingOffset) % dayLength);
-    window.setTimeout(() => {
-      syncDay();
-      scheduleMidnight();
-    }, remaining);
-  }
-
   document.addEventListener("click", event => {
     const button = event.target.closest("button[data-article], button[data-brief]");
     if (!button) return;
-    syncDay();
     if (button.hasAttribute("data-brief")) showBrief();
     else {
       const item = itemsById.get(button.dataset.article);
@@ -505,10 +407,18 @@
   });
   refreshButton.addEventListener("click", refreshFeed);
   window.addEventListener("hashchange", showView);
-  window.addEventListener("pageshow", syncDay);
-  document.addEventListener("visibilitychange", syncDay);
-  publishedFeed = window.POLICY_FEED ?? { mode: "demo", sources: [], items: [] };
-  showFeed(publishedFeed);
+  const local = location.protocol === "file:";
+  const bundled = window.POLICY_FEED;
+  const empty = { mode: "live", days: [], sources: [], items: [], aiEnabled: true };
+  showFeed((local || bundled?.mode === "live") && bundled ? bundled : empty);
   showView();
-  scheduleMidnight();
+  if (!local) {
+    refreshStatus.textContent = loadingFeed;
+    loadFeed("/latest").then(snapshot => {
+      if (!feed.generatedAt || Date.parse(snapshot.generatedAt) > Date.parse(feed.generatedAt)) showFeed(snapshot);
+      if (refreshStatus.textContent === loadingFeed) refreshStatus.textContent = "";
+    }).catch(() => {
+      if (refreshStatus.textContent === loadingFeed) refreshStatus.textContent = "暂时无法读取已保存的资讯。";
+    });
+  }
 })();

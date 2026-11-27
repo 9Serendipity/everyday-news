@@ -24,7 +24,7 @@ export async function requestAnalyses(service, ids, onReady) {
   if (!ids.length) return 0;
   const ticketsUrl = new URL("/analysis-tickets", service);
   ticketsUrl.searchParams.set("ids", ids.join(","));
-  const { ready, tickets } = await read(ticketsUrl);
+  const { ready, tickets } = await read(ticketsUrl, { method: "POST" });
   let completed = ready.length;
   if (ready.length) onReady(ready);
   const analysisUrl = new URL("/analyse", service);
