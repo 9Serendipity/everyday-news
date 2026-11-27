@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       ai_limit:
-        description: '本次最多解读条数（0–24）。填 0 仅采集资讯。'
+        description: '本次最多解读条数（0–50）。填 0 仅采集资讯。'
         type: number
-        default: 6
+        default: 50
   schedule:
     - cron: '17 * * * *'
 

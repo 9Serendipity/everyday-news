@@ -4,7 +4,7 @@
 
 ## 浏览和更新
 
-在网站点击「刷新资讯」可以检查并加载刚发布的数据。要立即重新采集，打开弹窗里的「打开采集工作流」，在 GitHub 选择 **Run workflow** 并运行 `main`。任务发布后，回到网站即可检查更新。
+在网站点「刷新资讯」后选「立即采集」。首次连接时，在弹窗里填写仅适用于 `everyday-news` 仓库的 GitHub 细粒度访问令牌，授予 Actions **Read and write** 权限。令牌保存在当前页面内存中，网页直接请求 GitHub Actions，等待发布完成后加载结果。「检查更新」可随时读取已发布的数据。
 
 双击打开 `site/index.html`，可离线查看随源码附带的演示快照。使用 Node.js 24 运行以下命令，可在本机采集公开资讯并更新页面数据。
 
@@ -26,6 +26,6 @@
 
 ## 启用 DeepSeek
 
-在仓库 **Settings → Secrets and variables → Actions → Secrets** 添加名为 `DEEPSEEK_API_KEY` 的仓库密钥，然后重新运行发布工作流。可在同页的 **Variables** 设置 `DEEPSEEK_MODEL`，默认使用 `deepseek-flash`。定时任务默认每次最多调用 6 次。手动运行时可以填写 0 到 24，填 0 仅采集。已有解读会随归档保留，分析只接收官方新闻标题、发布日期和正文的有限片段。
+在仓库 **Settings → Secrets and variables → Actions → Secrets** 添加名为 `DEEPSEEK_API_KEY` 的仓库密钥，然后重新运行发布工作流。可在同页的 **Variables** 设置 `DEEPSEEK_MODEL`，默认使用 `deepseek-flash`。默认每次最多调用 50 次。手动运行时可以填写 0 到 50，填 0 仅采集。已有解读会随归档保留，分析只接收官方新闻标题、发布日期和正文的有限片段。
 
 [GitHub Actions 密钥文档](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets) · [DeepSeek API 文档](https://api-docs.deepseek.com/api/create-chat-completion/)

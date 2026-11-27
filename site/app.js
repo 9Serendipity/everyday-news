@@ -17,12 +17,17 @@
   });
   const directions = { positive: "偏正面", negative: "偏负面", neutral: "中性", unclear: "待观察" };
   const statuses = { ok: "已采集", error: "采集异常", pending: "待采集", demo: "演示" };
-  const workflowUrl = "https://github.com/9Serendipity/everyday-news/actions/workflows/publish.yml";
+  const githubActionsUrl = "https://api.github.com/repos/9Serendipity/everyday-news/actions/";
+  const githubTokenSetupUrl = "https://github.com/settings/personal-access-tokens/new?name=Policy+Radar+manual+refresh&target_name=9Serendipity&actions=write";
+  const maxAnalysisLimit = 50;
   const pageSize = 8;
   let limit = pageSize;
   let currentView = "";
   let previousFocus;
   let pendingFeedRequest;
+  let githubToken = "";
+  let collectionBusy = false;
+  let collectionMessage = "";
 
   const byId = id => document.getElementById(id);
   const query = byId("query");
@@ -339,33 +344,187 @@
     return pendingFeedRequest;
   }
 
+  async function refreshPublishedFeed() {
+    const snapshot = await loadPublishedFeed();
+    const newVersion = Date.parse(snapshot?.generatedAt);
+    const currentVersion = Date.parse(feed.generatedAt) || 0;
+    if (snapshot?.mode !== "live" || !(newVersion > currentVersion)) return false;
+    showFeed(snapshot);
+    if (byId("refresh-feed-status")) byId("dialog-eyebrow").textContent = updateText();
+    return true;
+  }
+
+  function renderCollectionStatus() {
+    const start = byId("start-collection");
+    if (!start) return;
+    start.disabled = collectionBusy;
+    start.textContent = collectionBusy ? "采集任务进行中" : "立即采集";
+    byId("collection-status").textContent = collectionMessage;
+    const disconnect = byId("disconnect-github");
+    disconnect.hidden = !githubToken;
+    disconnect.disabled = collectionBusy;
+    if (githubToken) byId("collection-authorization").hidden = true;
+  }
+
+  function requestGitHub(path, token, body) {
+    return fetch(new URL(path, githubActionsUrl), {
+      method: body ? "POST" : "GET",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: "Bearer " + token,
+        "Content-Type": "application/json",
+        "X-GitHub-Api-Version": "2026-03-10"
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      credentials: "omit",
+      redirect: "error",
+      cache: "no-store",
+      signal: AbortSignal.timeout(15_000)
+    });
+  }
+
+  function pause(duration) {
+    return new Promise(resolve => window.setTimeout(resolve, duration));
+  }
+
+  async function waitForCollection(runId, token) {
+    const deadline = Date.now() + 26 * 60_000;
+    while (Date.now() < deadline) {
+      await pause(6_000);
+      const response = await requestGitHub("runs/" + runId, token);
+      if (!response.ok) throw new Error("无法读取运行状态");
+      const run = await response.json();
+      if (run.status === "completed") return run.conclusion;
+      collectionMessage = run.status === "in_progress" ? "正在采集和发布…" : "等待 GitHub 执行采集…";
+      renderCollectionStatus();
+    }
+    throw new Error("等待发布超时");
+  }
+
+  async function startCollection(token, limit) {
+    if (collectionBusy) return;
+    collectionBusy = true;
+    collectionMessage = "正在启动采集…";
+    renderCollectionStatus();
+    let submitted = false;
+    try {
+      const response = await requestGitHub("workflows/publish.yml/dispatches", token, {
+        ref: "main", inputs: { ai_limit: String(limit) }, return_run_details: true
+      });
+      if (!response.ok) {
+        if ([401, 403, 404].includes(response.status)) {
+          githubToken = "";
+          const authorization = byId("collection-authorization");
+          if (authorization) authorization.hidden = false;
+          collectionMessage = "GitHub 授权失败。请确认令牌允许对 everyday-news 的 Actions 进行读写。";
+        } else {
+          collectionMessage = "GitHub 未启动采集，错误代码 " + response.status + "。";
+        }
+        return;
+      }
+
+      submitted = true;
+      githubToken = token;
+      const tokenInput = byId("collection-token");
+      if (tokenInput) tokenInput.value = "";
+      collectionMessage = "GitHub 已接收采集任务。";
+      renderCollectionStatus();
+
+      const run = response.status === 200 ? await response.json() : null;
+      const runId = run?.workflow_run_id;
+      if (!Number.isSafeInteger(runId) || runId < 1) {
+        collectionMessage = "采集已启动。发布完成后可点击「检查更新」。";
+        return;
+      }
+      const conclusion = await waitForCollection(runId, token);
+      if (conclusion !== "success") {
+        collectionMessage = "本次发布未完成，可再次发起采集。";
+        return;
+      }
+
+      for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+          await refreshPublishedFeed();
+          if (feed.workflowRunId === runId) {
+            collectionMessage = "采集发布完成，已加载最新资讯。";
+            const status = byId("refresh-feed-status");
+            if (status) status.textContent = "";
+            return;
+          }
+        } catch {
+          // GitHub Pages 的新版本可能还在分发。
+        }
+        if (attempt < 3) await pause(4_000);
+      }
+      collectionMessage = "采集发布完成，可点击「检查更新」加载结果。";
+    } catch {
+      collectionMessage = submitted
+        ? "采集已提交，暂时无法查看进度。可稍后点击「检查更新」。"
+        : "暂时无法确认采集是否启动。请稍后检查更新。";
+    } finally {
+      collectionBusy = false;
+      renderCollectionStatus();
+    }
+  }
+
   function showRefresh() {
     const content = document.createDocumentFragment();
-    const description = node("p", "refresh-description", "要立即采集官方新闻，打开 GitHub 后选择 Run workflow。发布完成后，本页可以加载新结果。");
+    const description = node("p", "refresh-description", "立即采集官方资讯，发布完成后自动加载。");
+    const form = node("form", "refresh-form");
+    form.method = "dialog";
+    const limitField = node("label", "refresh-field");
+    const limitInput = node("input");
+    limitInput.type = "number";
+    limitInput.min = "0";
+    limitInput.max = String(maxAnalysisLimit);
+    limitInput.step = "1";
+    limitInput.value = String(maxAnalysisLimit);
+    limitInput.required = true;
+    limitField.append(node("span", "", "本次最多解读"), limitInput, node("small", "", "填 0 仅采集资讯。"));
+
+    const authorization = node("div", "refresh-authorization");
+    authorization.id = "collection-authorization";
+    authorization.hidden = true;
+    const tokenField = node("label", "refresh-field");
+    const token = node("input");
+    token.id = "collection-token";
+    token.type = "password";
+    token.autocomplete = "off";
+    token.autocapitalize = "off";
+    token.spellcheck = false;
+    tokenField.append(node("span", "", "GitHub 仓库令牌"), token);
+    authorization.append(tokenField,
+      node("p", "", "仅授权 everyday-news 仓库的 Actions 读写。令牌只用于当前打开的页面。"),
+      externalLink(githubTokenSetupUrl, "创建仓库令牌", "side-action")
+    );
+
     const actions = node("div", "refresh-actions");
-    const openWorkflow = externalLink(workflowUrl, "打开采集工作流", "button button-accent");
+    const start = node("button", "button button-accent", "立即采集");
+    start.id = "start-collection";
+    start.type = "submit";
     const check = node("button", "button button-subtle", "检查更新");
     check.type = "button";
+    const disconnect = node("button", "side-action", "清除本页授权");
+    disconnect.id = "disconnect-github";
+    disconnect.type = "button";
+    disconnect.hidden = true;
+    const collectStatus = node("p", "refresh-status");
+    collectStatus.id = "collection-status";
+    collectStatus.setAttribute("role", "status");
     const status = node("p", "refresh-status");
+    status.id = "refresh-feed-status";
     status.setAttribute("role", "status");
-    actions.append(openWorkflow, check);
-    content.append(description, actions, status);
+    actions.append(start, check, disconnect);
+    form.append(limitField, authorization, actions, collectStatus, status);
+    content.append(description, form);
 
     async function checkForUpdate() {
       if (check.disabled) return;
       check.disabled = true;
       status.textContent = "正在检查更新…";
       try {
-        const snapshot = await loadPublishedFeed();
-        const newVersion = Date.parse(snapshot?.generatedAt);
-        const currentVersion = Date.parse(feed.generatedAt) || 0;
-        if (snapshot?.mode === "live" && newVersion > currentVersion) {
-          showFeed(snapshot);
-          if (status.isConnected) byId("dialog-eyebrow").textContent = updateText();
-          status.textContent = "已加载最新资讯。";
-        } else {
-          status.textContent = feed.mode === "live" ? "当前已是最新发布。" : "当前显示演示数据。";
-        }
+        const updated = await refreshPublishedFeed();
+        status.textContent = updated ? "已加载最新资讯。" : feed.mode === "live" ? "当前已是最新发布。" : "当前显示演示数据。";
       } catch {
         status.textContent = "暂时无法检查更新，请重试。";
       } finally {
@@ -374,12 +533,29 @@
     }
 
     check.addEventListener("click", checkForUpdate);
-    openWorkflow.addEventListener("click", () => {
-      window.addEventListener("focus", () => {
-        if (dialog.open && status.isConnected) checkForUpdate();
-      }, { once: true });
+    disconnect.addEventListener("click", () => {
+      githubToken = "";
+      collectionMessage = "已清除本页授权。";
+      renderCollectionStatus();
+    });
+    form.addEventListener("submit", event => {
+      event.preventDefault();
+      if (collectionBusy) return;
+      const key = githubToken || token.value.trim();
+      if (!/^github_pat_[A-Za-z0-9_]+$/.test(key)) {
+        authorization.hidden = false;
+        token.focus();
+        collectionMessage = "请填写这个仓库的 GitHub 细粒度令牌。";
+        renderCollectionStatus();
+        return;
+      }
+      const limit = limitInput.valueAsNumber;
+      if (!Number.isInteger(limit) || limit < 0 || limit > maxAnalysisLimit) return;
+      status.textContent = "";
+      startCollection(key, limit);
     });
     displayDialog("刷新资讯", updateText(), content);
+    renderCollectionStatus();
     checkForUpdate();
   }
 

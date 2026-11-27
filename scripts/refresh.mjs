@@ -7,10 +7,10 @@ const archivePath = process.env.FEED_ARCHIVE_PATH || ".feed/archive.json";
 const outputPath = process.env.FEED_OUTPUT_PATH || "site/feed-data.js";
 const maxItems = 450;
 const detailLimit = 24;
-const defaultAnalysisLimit = 6;
-const maximumAnalysisLimit = 24;
+const maximumAnalysisLimit = 50;
+const analysisConcurrency = 4;
 const requestedLimit = process.env.DEEPSEEK_ANALYSIS_LIMIT?.trim();
-const analysisLimit = requestedLimit ? Number(requestedLimit) : defaultAnalysisLimit;
+const analysisLimit = requestedLimit ? Number(requestedLimit) : maximumAnalysisLimit;
 if (!Number.isInteger(analysisLimit) || analysisLimit < 0 || analysisLimit > maximumAnalysisLimit) {
   throw new Error("本次解读条数请输入 0 到 " + maximumAnalysisLimit + " 的整数。");
 }
@@ -86,22 +86,24 @@ if (!items.length) {
     }));
   }
 
-  let remainingCalls = analysisLimit;
-  for (const item of toAnalyze) {
-    if (!remainingCalls) break;
-    const context = articleTexts.get(item.id);
-    if (!context) continue;
-    remainingCalls--;
-    try {
-      item.analysis = await analyze(item, context, { key, model });
-    } catch (error) {
-      console.warn("解读暂缓：" + item.id + "，" + error.message);
-      if (/HTTP (401|402|403|429)/.test(error.message)) break;
-    }
+  const readyToAnalyze = toAnalyze.filter(item => articleTexts.has(item.id)).slice(0, analysisLimit);
+  for (let start = 0; start < readyToAnalyze.length; start += analysisConcurrency) {
+    const batch = readyToAnalyze.slice(start, start + analysisConcurrency);
+    const stopBeforeNextBatch = await Promise.all(batch.map(async item => {
+      try {
+        item.analysis = await analyze(item, articleTexts.get(item.id), { key, model });
+        return false;
+      } catch (error) {
+        console.warn("解读暂缓：" + item.id + "，" + error.message);
+        return /HTTP (401|402|403|429)/.test(error.message);
+      }
+    }));
+    if (stopBeforeNextBatch.includes(true)) break;
   }
 
   const archive = { items };
-  const snapshot = { mode: "live", generatedAt: checkedAt, aiEnabled: Boolean(key), sources: sourceStates, items };
+  const workflowRunId = Number(process.env.GITHUB_RUN_ID) || undefined;
+  const snapshot = { mode: "live", generatedAt: checkedAt, workflowRunId, aiEnabled: Boolean(key), sources: sourceStates, items };
   await writeAtomic(archivePath, JSON.stringify(archive, null, 2) + "\n");
   await writeAtomic(outputPath, "window.POLICY_FEED = " + JSON.stringify(snapshot, null, 2) + ";\n");
   console.log("已生成发布数据，归档共 " + items.length + " 条。");
