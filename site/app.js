@@ -1,12 +1,12 @@
 (() => {
   "use strict";
 
-  const feed = window.POLICY_FEED ?? { mode: "demo", sources: [], items: [] };
-  const sources = new Map(feed.sources.map(source => [source.id, source]));
-  const items = feed.items;
-  const itemsById = new Map(items.map(item => [item.id, item]));
-  const latestDay = items[0]?.day;
-  const latestItems = items.filter(item => item.day === latestDay);
+  let feed;
+  let sources;
+  let items;
+  let itemsById;
+  let latestDay;
+  let latestItems;
   const count = new Intl.NumberFormat("zh-CN");
   const dayFormat = new Intl.DateTimeFormat("zh-CN", {
     timeZone: "Asia/Shanghai", year: "numeric", month: "long", day: "numeric"
@@ -17,10 +17,12 @@
   });
   const directions = { positive: "偏正面", negative: "偏负面", neutral: "中性", unclear: "待观察" };
   const statuses = { ok: "已采集", error: "采集异常", pending: "待采集", demo: "演示" };
+  const workflowUrl = "https://github.com/9Serendipity/everyday-news/actions/workflows/publish.yml";
   const pageSize = 8;
   let limit = pageSize;
   let currentView = "";
   let previousFocus;
+  let pendingFeedRequest;
 
   const byId = id => document.getElementById(id);
   const query = byId("query");
@@ -44,6 +46,7 @@
   function setDay(element, day, text) {
     element.textContent = text ?? dateText(day);
     if (day) element.dateTime = day;
+    else element.removeAttribute("datetime");
     return element;
   }
 
@@ -78,7 +81,9 @@
   }
 
   function optionList(select, first, entries) {
+    const previous = select.value;
     select.replaceChildren(new Option(first, ""), ...entries.map(([value, title]) => new Option(title, value)));
+    if (entries.some(([value]) => value === previous)) select.value = previous;
   }
 
   function createRecord(item) {
@@ -210,7 +215,7 @@
     const content = document.createDocumentFragment();
     if (item.excerpt) {
       const original = node("section", "dialog-section");
-      original.append(node("h3", "", demo ? "原文要点" : "原文摘录"), node("p", "", item.excerpt));
+      original.append(node("h3", "", feed.mode === "live" ? "原文摘录" : "原文要点"), node("p", "", item.excerpt));
       content.append(original);
     }
     if (item.analysis) {
@@ -241,56 +246,142 @@
     displayDialog(item.title, sourceName(item) + " · " + dateText(item.day), content);
   }
 
-  const sourceList = [...sources.values()];
-  const countsBySource = new Map();
-  for (const item of items) {
-    countsBySource.set(item.sourceId, (countsBySource.get(item.sourceId) ?? 0) + 1);
-  }
-  optionList(sourceFilter, "全部信源", sourceList.map(source => [source.id, source.shortName]));
-  const categories = [...new Set(items.map(item => item.category).filter(Boolean))].sort();
-  optionList(categoryFilter, "全部主题", categories.map(value => [value, value]));
-  const days = [...new Set(items.map(item => item.day))];
-  optionList(dateFilter, "全部日期", days.map(day => [day, dateText(day)]));
-
-  const demo = feed.mode !== "live";
-  byId("feed-mode").textContent = demo ? "演示数据" : "官方资讯";
-  byId("feed-mode").classList.toggle("demo", demo);
-  setDay(byId("hero-day"), latestDay);
-  setDay(byId("brief-day"), latestDay);
-  byId("metric-total").textContent = count.format(items.length);
-  byId("metric-day").textContent = count.format(latestItems.length);
-  byId("metric-sources").textContent = count.format(sources.size);
-  byId("metric-analysis").textContent = count.format(items.filter(item => item.analysis).length);
-  if (demo) byId("analysis-label").textContent = "示例解读";
-  if (!demo && !feed.aiEnabled) byId("analysis-label").textContent = "AI 解读 · 待配置";
-
-  byId("brief-list").append(...latestItems.slice(0, 3).map(briefItem));
-  if (!latestItems.length) byId("brief-list").append(node("li", "", "暂无简报"));
-  for (const source of sourceList.slice(0, 4)) {
-    const summary = node("li");
-    summary.append(node("span", "", source.shortName), sourceStatus(source));
-    byId("side-sources").append(summary);
+  function updateText() {
+    if (feed.mode !== "live" || !feed.generatedAt) return "演示快照 · " + dateText(latestDay);
+    return "最近更新 " + stampFormat.format(new Date(feed.generatedAt)) + "（北京时间）";
   }
 
-  for (const source of sourceList) {
-    const tile = node("article", "source-tile");
-    const checked = source.checkedAt ? " · " + stampFormat.format(new Date(source.checkedAt)) + " 检查" : "";
-    const details = "已收录 " + count.format(countsBySource.get(source.id) ?? 0) + " 条" + checked;
-    tile.append(
-      node("h2", "", source.name),
-      node("p", "", details),
-      sourceStatus(source),
-      node("br"),
-      externalLink(source.url, "打开官方栏目", "side-action")
-    );
-    byId("source-grid").append(tile);
+  function showFeed(snapshot) {
+    feed = snapshot;
+    const sourceList = feed.sources;
+    sources = new Map(sourceList.map(source => [source.id, source]));
+    items = feed.items;
+    itemsById = new Map(items.map(item => [item.id, item]));
+    latestDay = items[0]?.day;
+    latestItems = items.filter(item => item.day === latestDay);
+
+    const countsBySource = new Map();
+    for (const item of items) {
+      countsBySource.set(item.sourceId, (countsBySource.get(item.sourceId) ?? 0) + 1);
+    }
+    optionList(sourceFilter, "全部信源", sourceList.map(source => [source.id, source.shortName]));
+    const categories = [...new Set(items.map(item => item.category).filter(Boolean))].sort();
+    optionList(categoryFilter, "全部主题", categories.map(value => [value, value]));
+    const days = [...new Set(items.map(item => item.day))];
+    optionList(dateFilter, "全部日期", days.map(day => [day, dateText(day)]));
+
+    const demo = feed.mode !== "live";
+    byId("feed-mode").textContent = demo ? "演示数据" : "官方资讯";
+    byId("feed-mode").classList.toggle("demo", demo);
+    setDay(byId("hero-day"), latestDay);
+    setDay(byId("brief-day"), latestDay);
+    byId("metric-total").textContent = count.format(items.length);
+    byId("metric-day").textContent = count.format(latestItems.length);
+    byId("metric-sources").textContent = count.format(sources.size);
+    byId("metric-analysis").textContent = count.format(items.filter(item => item.analysis).length);
+    byId("analysis-label").textContent = demo ? "示例解读" : feed.aiEnabled ? "AI 解读" : "AI 解读 · 待配置";
+
+    const brief = latestItems.slice(0, 3).map(briefItem);
+    byId("brief-list").replaceChildren(...(brief.length ? brief : [node("li", "", "暂无简报")]));
+    const sideSources = sourceList.slice(0, 4).map(source => {
+      const summary = node("li");
+      summary.append(node("span", "", source.shortName), sourceStatus(source));
+      return summary;
+    });
+    byId("side-sources").replaceChildren(...sideSources);
+
+    const tiles = sourceList.map(source => {
+      const tile = node("article", "source-tile");
+      const checked = source.checkedAt ? " · " + stampFormat.format(new Date(source.checkedAt)) + " 检查" : "";
+      const details = "已收录 " + count.format(countsBySource.get(source.id) ?? 0) + " 条" + checked;
+      tile.append(
+        node("h2", "", source.name),
+        node("p", "", details),
+        sourceStatus(source),
+        node("br"),
+        externalLink(source.url, "打开官方栏目", "side-action")
+      );
+      return tile;
+    });
+    byId("source-grid").replaceChildren(...tiles);
+    byId("source-note").textContent = demo
+      ? "正在查看演示快照。各栏目当前状态会随采集结果更新。"
+      : "采集由 GitHub Actions 定时运行，状态反映最近一次任务。";
+    byId("footer-update").textContent = updateText();
+    if (currentView && currentView !== "sources") renderRecords();
   }
-  byId("source-note").textContent = demo
-    ? "正在查看演示快照。各栏目当前状态会随采集结果更新。"
-    : "采集由 GitHub Actions 定时运行，状态反映最近一次任务。";
-  byId("footer-update").textContent = demo || !feed.generatedAt
-    ? "演示快照 · " + dateText(latestDay)
-    : "最近检查 " + stampFormat.format(new Date(feed.generatedAt)) + "（北京时间）";
+
+  function loadPublishedFeed() {
+    if (pendingFeedRequest) return pendingFeedRequest;
+    const url = new URL("./feed-data.js", document.baseURI);
+    url.searchParams.set("refresh", String(Date.now()));
+    const previousSnapshot = window.POLICY_FEED;
+    pendingFeedRequest = new Promise((resolve, reject) => {
+      const script = node("script");
+      script.src = url.href;
+      const timer = window.setTimeout(() => finish(reject, new Error("检查更新超时")), 15_000);
+      function finish(settle, value) {
+        window.clearTimeout(timer);
+        script.remove();
+        settle(value);
+      }
+      script.onload = () => {
+        const snapshot = window.POLICY_FEED;
+        if (snapshot !== previousSnapshot && Array.isArray(snapshot?.sources) && Array.isArray(snapshot.items)) {
+          finish(resolve, snapshot);
+        } else {
+          finish(reject, new Error("资讯数据格式错误"));
+        }
+      };
+      script.onerror = () => finish(reject, new Error("无法加载资讯"));
+      document.head.append(script);
+    }).finally(() => { pendingFeedRequest = undefined; });
+    return pendingFeedRequest;
+  }
+
+  function showRefresh() {
+    const content = document.createDocumentFragment();
+    const description = node("p", "refresh-description", "要立即采集官方新闻，打开 GitHub 后选择 Run workflow。发布完成后，本页可以加载新结果。");
+    const actions = node("div", "refresh-actions");
+    const openWorkflow = externalLink(workflowUrl, "打开采集工作流", "button button-accent");
+    const check = node("button", "button button-subtle", "检查更新");
+    check.type = "button";
+    const status = node("p", "refresh-status");
+    status.setAttribute("role", "status");
+    actions.append(openWorkflow, check);
+    content.append(description, actions, status);
+
+    async function checkForUpdate() {
+      if (check.disabled) return;
+      check.disabled = true;
+      status.textContent = "正在检查更新…";
+      try {
+        const snapshot = await loadPublishedFeed();
+        const newVersion = Date.parse(snapshot?.generatedAt);
+        const currentVersion = Date.parse(feed.generatedAt) || 0;
+        if (snapshot?.mode === "live" && newVersion > currentVersion) {
+          showFeed(snapshot);
+          if (status.isConnected) byId("dialog-eyebrow").textContent = updateText();
+          status.textContent = "已加载最新资讯。";
+        } else {
+          status.textContent = feed.mode === "live" ? "当前已是最新发布。" : "当前显示演示数据。";
+        }
+      } catch {
+        status.textContent = "暂时无法检查更新，请重试。";
+      } finally {
+        check.disabled = false;
+      }
+    }
+
+    check.addEventListener("click", checkForUpdate);
+    openWorkflow.addEventListener("click", () => {
+      window.addEventListener("focus", () => {
+        if (dialog.open && status.isConnected) checkForUpdate();
+      }, { once: true });
+    });
+    displayDialog("刷新资讯", updateText(), content);
+    checkForUpdate();
+  }
 
   document.addEventListener("click", event => {
     const button = event.target.closest("button[data-article], button[data-brief]");
@@ -318,6 +409,8 @@
     renderRecords();
     byId("feed-list").querySelectorAll(".article-title")[previousLimit]?.focus();
   });
+  byId("refresh-feed").addEventListener("click", showRefresh);
   window.addEventListener("hashchange", showView);
+  showFeed(window.POLICY_FEED ?? { mode: "demo", sources: [], items: [] });
   showView();
 })();

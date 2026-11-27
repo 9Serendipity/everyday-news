@@ -7,7 +7,13 @@ const archivePath = process.env.FEED_ARCHIVE_PATH || ".feed/archive.json";
 const outputPath = process.env.FEED_OUTPUT_PATH || "site/feed-data.js";
 const maxItems = 450;
 const detailLimit = 24;
-const analysisLimit = 6;
+const defaultAnalysisLimit = 6;
+const maximumAnalysisLimit = 24;
+const requestedLimit = process.env.DEEPSEEK_ANALYSIS_LIMIT?.trim();
+const analysisLimit = requestedLimit ? Number(requestedLimit) : defaultAnalysisLimit;
+if (!Number.isInteger(analysisLimit) || analysisLimit < 0 || analysisLimit > maximumAnalysisLimit) {
+  throw new Error("本次解读条数请输入 0 到 " + maximumAnalysisLimit + " 的整数。");
+}
 
 async function loadArchive() {
   try {
@@ -59,9 +65,11 @@ if (!items.length) {
 } else {
   const key = process.env.DEEPSEEK_API_KEY?.trim();
   const model = process.env.DEEPSEEK_MODEL?.trim() || "deepseek-flash";
-  const toAnalyze = key ? items.filter(item => !item.analysis).slice(0, analysisLimit) : [];
+  const toAnalyze = key && analysisLimit > 0 ? items.filter(item => !item.analysis) : [];
+  console.log("本次 DeepSeek 解读上限 " + analysisLimit + " 条。");
   const needsDetail = new Map([...toAnalyze, ...items.filter(item => !item.excerpt)].map(item => [item.id, item]));
-  const detailItems = [...needsDetail.values()].slice(0, detailLimit);
+  const contextLimit = Math.min(toAnalyze.length, analysisLimit * 2);
+  const detailItems = [...needsDetail.values()].slice(0, Math.max(detailLimit, contextLimit));
   const articleTexts = new Map();
 
   for (let start = 0; start < detailItems.length; start += 5) {
@@ -78,9 +86,12 @@ if (!items.length) {
     }));
   }
 
+  let remainingCalls = analysisLimit;
   for (const item of toAnalyze) {
+    if (!remainingCalls) break;
     const context = articleTexts.get(item.id);
     if (!context) continue;
+    remainingCalls--;
     try {
       item.analysis = await analyze(item, context, { key, model });
     } catch (error) {
