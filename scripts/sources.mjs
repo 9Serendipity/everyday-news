@@ -34,7 +34,7 @@ export const sources = [
   {
     id: "pbc", name: "中国人民银行", shortName: "人民银行", category: "货币与金融",
     url: "https://www.pbc.gov.cn/goutongjiaoliu/113456/113469/index.html",
-    fallbackRss: "https://www.pbc.gov.cn/goutongjiaoliu/113456/2986536/index.html",
+    fallback: { url: "https://www.pbc.gov.cn/goutongjiaoliu/113456/2986536/index.html", decode: rssRows },
     list: "font.newslist_style a[istitle]", container: "td", date: ".hui12", article: "#zoom"
   },
   {
@@ -50,18 +50,27 @@ export const sources = [
   },
   {
     id: "miit", name: "工业和信息化部", shortName: "工信部", category: "产业政策", url: miit,
-    endpoint: miitNotices.href,
+    endpoint: miitNotices.href, listTimeout: 5_000,
     list: "li > a[href^='/zwgk/zcwj/wjfb/tz/art/']", date: "span.fr", article: "#con_con",
     decode: (body, source) => {
       const $ = load(JSON.parse(body).data.html);
       $("span.fr .jd").remove();
       return htmlRows($, source);
+    },
+    fallback: {
+      url: "https://wap.miit.gov.cn/", timeout: 7_000,
+      decode: body => htmlRows(load(body), {
+        list: ".floor4 .tabbox-bds2 .tabbox-bd-con:first-child li a[href*='/zwgk/zcwj/wjfb/tz/art/']",
+        date: "p > span"
+      })
     }
   },
   {
     id: "nbs", name: "国家统计局", shortName: "国家统计局", category: "宏观数据",
     url: "https://www.stats.gov.cn/sj/zxfb/",
-    list: ".list-content li a[href*='/t20'][title]", date: "span", article: ".trs_editor_view"
+    list: ".list-content li a[href*='/t20'][title]", date: "span", article: ".trs_editor_view",
+    articleEndpoint: url => new URL(url.pathname.replace(/^\/sj\/zxfb\//, "/zwfwck/sjfb/"), url).href,
+    fallbackArticle: url => url.href
   },
   {
     id: "nfra", name: "国家金融监督管理总局", shortName: "金融监管总局", category: "金融监管",
@@ -124,10 +133,10 @@ function canonical(raw, source) {
   }
 }
 
-async function download(url) {
+async function download(url, timeout = 12_000) {
   const response = await fetch(url, {
     redirect: "manual",
-    signal: AbortSignal.timeout(12_000),
+    signal: AbortSignal.timeout(timeout),
     headers: {
       "User-Agent": "Mozilla/5.0 (compatible; PolicyRadar/1.0)",
       Accept: "text/html,application/json;q=0.9,*/*;q=0.5"
@@ -180,19 +189,25 @@ async function collectEntries(rows, source, days) {
 
 export async function collect(source, days = beijingDays()) {
   try {
-    const body = await download(source.endpoint ?? source.url);
+    const body = await download(source.endpoint ?? source.url, source.listTimeout);
     const rows = source.decode ? source.decode(body, source) : htmlRows(load(body), source);
     return await collectEntries(rows, source, days);
   } catch (error) {
-    if (!source.fallbackRss) throw error;
-    return collectEntries(rssRows(await download(source.fallbackRss)), source, days);
+    if (!source.fallback) throw error;
+    const { url, timeout, decode } = source.fallback;
+    return collectEntries(decode(await download(url, timeout)), source, days);
   }
 }
 
 export async function readArticle(item) {
   const source = sources.find(entry => entry.id === item.sourceId);
   if (!source || canonical(item.url, source) !== item.url) return "";
-  const body = await download(source.articleEndpoint ? source.articleEndpoint(new URL(item.url)) : item.url);
+  const url = new URL(item.url);
+  const endpoint = source.articleEndpoint?.(url) ?? item.url;
+  const alternate = source.fallbackArticle?.(url);
+  const body = alternate && alternate !== endpoint
+    ? await download(endpoint, 7_000).catch(() => download(alternate, 7_000))
+    : await download(endpoint);
   const $ = load(source.articleMarkup ? source.articleMarkup(body) : body);
   const section = $(source.article).first();
   if (!section.length) return "";
