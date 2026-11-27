@@ -42,6 +42,10 @@ export function beijingDay(time = Date.now()) {
   return new Date(time + 8 * 60 * 60_000).toISOString().slice(0, 10);
 }
 
+export function beijingDays(time = Date.now()) {
+  return [beijingDay(time - 24 * 60 * 60_000), beijingDay(time)];
+}
+
 function clean(value) {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
 }
@@ -108,7 +112,7 @@ async function articleId(url) {
   return Array.from(new Uint8Array(hash, 0, 8), byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function collectEntries(rows, source, today) {
+async function collectEntries(rows, source, days) {
   const entries = new Map();
   let recognized = false;
   for (const [rawUrl, rawTitle, rawDate] of rows) {
@@ -117,21 +121,21 @@ async function collectEntries(rows, source, today) {
     const day = chinaDay(rawDate);
     if (!url || !title || !day) continue;
     recognized = true;
-    if (day !== today || entries.has(url)) continue;
+    if (!days.includes(day) || entries.has(url)) continue;
     entries.set(url, { sourceId: source.id, title, day, url, category: source.category, excerpt: "" });
   }
   if (!recognized) throw new Error("未识别到带日期的文章");
   return Promise.all([...entries.values()].map(async item => ({ id: await articleId(item.url), ...item })));
 }
 
-export async function collect(source, today = beijingDay()) {
+export async function collect(source, days = beijingDays()) {
   try {
     const body = await download(source.endpoint ?? source.url);
     const rows = source.decode ? source.decode(body) : htmlRows(body, source);
-    return await collectEntries(rows, source, today);
+    return await collectEntries(rows, source, days);
   } catch (error) {
     if (!source.fallbackRss) throw error;
-    return collectEntries(rssRows(await download(source.fallbackRss)), source, today);
+    return collectEntries(rssRows(await download(source.fallbackRss)), source, days);
   }
 }
 

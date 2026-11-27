@@ -5,12 +5,15 @@
   let sources;
   let items;
   let itemsById;
-  let displayDay;
+  let displayDays;
   const beijingOffset = 8 * 60 * 60_000;
   const dayLength = 24 * 60 * 60_000;
   const count = new Intl.NumberFormat("zh-CN");
   const dayFormat = new Intl.DateTimeFormat("zh-CN", {
     timeZone: "Asia/Shanghai", year: "numeric", month: "long", day: "numeric"
+  });
+  const shortDayFormat = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai", month: "long", day: "numeric"
   });
   const stampFormat = new Intl.DateTimeFormat("zh-CN", {
     timeZone: "Asia/Shanghai", month: "numeric", day: "numeric",
@@ -44,8 +47,16 @@
     return element;
   }
 
-  function beijingDay() {
-    return new Date(Date.now() + beijingOffset).toISOString().slice(0, 10);
+  function beijingDay(time = Date.now()) {
+    return new Date(time + beijingOffset).toISOString().slice(0, 10);
+  }
+
+  function beijingDays(time = Date.now()) {
+    return [beijingDay(time - dayLength), beijingDay(time)];
+  }
+
+  function rangeText(days) {
+    return days.map(day => shortDayFormat.format(new Date(day + "T12:00:00+08:00"))).join("至");
   }
 
   function dateText(day) {
@@ -140,7 +151,7 @@
     if (matches.length) return;
     const empty = node("div", "empty");
     const filtered = items.length > 0 && [query, sourceFilter, categoryFilter].some(control => control.value.trim());
-    empty.append(node("p", "", filtered ? "没有符合条件的资讯。" : "今日暂无资讯。"));
+    empty.append(node("p", "", filtered ? "没有符合条件的资讯。" : "近两日暂无资讯。"));
     if (filtered) {
       const button = node("button", "button button-subtle", "清除筛选");
       button.type = "button";
@@ -199,7 +210,7 @@
 
   function showBrief() {
     const content = document.createDocumentFragment();
-    if (!items.length) content.append(node("p", "empty", "今日暂无资讯。"));
+    if (!items.length) content.append(node("p", "empty", "近两日暂无资讯。"));
     for (const item of items) {
       const section = node("section", "dialog-section");
       const heading = node("h3");
@@ -209,7 +220,7 @@
       if (summary) section.append(node("p", "", summary));
       content.append(section);
     }
-    displayDialog("当日简报", dateText(displayDay), content);
+    displayDialog("两日简报", rangeText(displayDays), content);
   }
 
   function showRecord(item) {
@@ -254,10 +265,10 @@
 
   function showFeed(snapshot) {
     feed = snapshot;
-    displayDay = beijingDay();
+    displayDays = beijingDays();
     const sourceList = feed.sources;
     sources = new Map(sourceList.map(source => [source.id, source]));
-    items = feed.items.filter(item => item.day === displayDay);
+    items = feed.items.filter(item => displayDays.includes(item.day));
     itemsById = new Map(items.map(item => [item.id, item]));
 
     const countsBySource = new Map();
@@ -271,15 +282,15 @@
     const demo = feed.mode !== "live";
     byId("feed-mode").textContent = demo ? "演示数据" : "官方资讯";
     byId("feed-mode").classList.toggle("demo", demo);
-    setDay(byId("hero-day"), displayDay);
-    setDay(byId("brief-day"), displayDay);
+    byId("hero-range").textContent = rangeText(displayDays);
+    byId("brief-range").textContent = rangeText(displayDays);
     byId("metric-total").textContent = count.format(items.length);
     byId("metric-sources").textContent = count.format(sources.size);
     byId("metric-analysis").textContent = count.format(items.filter(item => item.analysis).length);
     byId("analysis-label").textContent = demo ? "示例解读" : feed.aiEnabled ? "AI 解读" : "AI 解读 · 待配置";
 
     const brief = items.slice(0, 3).map(briefItem);
-    byId("brief-list").replaceChildren(...(brief.length ? brief : [node("li", "", "今日暂无简报")]));
+    byId("brief-list").replaceChildren(...(brief.length ? brief : [node("li", "", "近两日暂无简报")]));
     const sideSources = sourceList.slice(0, 4).map(source => {
       const summary = node("li");
       summary.append(node("span", "", source.shortName), sourceStatus(source));
@@ -290,7 +301,7 @@
     const tiles = sourceList.map(source => {
       const tile = node("article", "source-tile");
       const checked = source.checkedAt ? " · " + stampFormat.format(new Date(source.checkedAt)) + " 检查" : "";
-      const details = "今日收录 " + count.format(countsBySource.get(source.id) ?? 0) + " 条" + checked;
+      const details = "两日收录 " + count.format(countsBySource.get(source.id) ?? 0) + " 条" + checked;
       tile.append(
         node("h2", "", source.name),
         node("p", "", details),
@@ -303,7 +314,7 @@
     byId("source-grid").replaceChildren(...tiles);
     byId("source-note").textContent = demo
       ? "正在查看演示快照。各栏目当前状态会随采集结果更新。"
-      : "按北京时间统计今日收录的资讯。";
+      : "按北京时间统计今天和昨天发布的资讯。";
     byId("footer-update").textContent = updateText();
     if (currentView && currentView !== "sources") renderRecords();
   }
@@ -352,12 +363,12 @@
 
   function mergeFeeds() {
     if (!liveFeed) return publishedFeed;
-    const today = beijingDay();
+    const days = beijingDays();
     const archivedItems = publishedFeed.mode === "live"
-      ? publishedFeed.items.filter(item => item.day === today) : [];
+      ? publishedFeed.items.filter(item => days.includes(item.day)) : [];
     const merged = new Map(archivedItems.map(item => [item.id, item]));
     for (const item of liveFeed.items) {
-      if (item.day === today && !merged.has(item.id)) merged.set(item.id, item);
+      if (days.includes(item.day) && !merged.has(item.id)) merged.set(item.id, item);
     }
     const checks = new Map(liveFeed.sources.map(source => [source.id, source]));
     const sourceList = publishedFeed.sources.map(source => {
@@ -379,7 +390,8 @@
   async function refreshFeed() {
     if (refreshButton.disabled) return;
     syncDay();
-    const requestedDay = displayDay;
+    const requestedDays = displayDays;
+    const requestedDay = requestedDays[1];
     refreshButton.disabled = true;
     refreshButton.textContent = "刷新中…";
     refreshStatus.textContent = "正在查询官方信源…";
@@ -406,14 +418,14 @@
       const available = new Set(recent.sources.filter(source => source.status === "ok").map(source => source.id));
       if (!liveFeed || Date.parse(recent.checkedAt) >= Date.parse(liveFeed.checkedAt)) {
         const retained = liveFeed?.items.filter(
-          item => item.day === requestedDay && !available.has(item.sourceId)
+          item => requestedDays.includes(item.day) && !available.has(item.sourceId)
         ) ?? [];
         liveFeed = { ...recent, items: [...recent.items, ...retained] };
       }
       showFeed(mergeFeeds());
       const newItems = items.filter(item => !knownIds.has(item.id)).length;
       const result = newItems ? "新增 " + count.format(newItems) + " 条资讯。"
-        : items.length ? "暂无新增资讯。" : "今日暂无资讯。";
+        : items.length ? "暂无新增资讯。" : "近两日暂无资讯。";
       const unavailable = recent.sources.length - available.size;
       const partial = unavailable ? " " + count.format(unavailable) + " 个信源暂未响应。" : "";
       const message = "已刷新。" + result + partial;
@@ -447,11 +459,13 @@
   }
 
   function syncDay() {
-    if (displayDay === beijingDay()) return;
+    if (displayDays[1] === beijingDay()) return;
     if (dialog.open) dialog.close();
-    liveAnalyses.clear();
     refreshStatus.textContent = "";
     showFeed(mergeFeeds());
+    for (const id of liveAnalyses.keys()) {
+      if (!itemsById.has(id)) liveAnalyses.delete(id);
+    }
   }
 
   function scheduleMidnight() {

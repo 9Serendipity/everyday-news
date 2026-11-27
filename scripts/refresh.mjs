@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { requestAnalyses } from "../site/analysis-client.js";
 import { analyze } from "./deepseek.mjs";
-import { beijingDay, collect, readArticle, sources } from "./sources.mjs";
+import { beijingDays, collect, readArticle, sources } from "./sources.mjs";
 
 const archivePath = process.env.FEED_ARCHIVE_PATH || ".feed/archive.json";
 const outputPath = process.env.FEED_OUTPUT_PATH || "site/feed-data.js";
@@ -34,15 +34,15 @@ async function writeAtomic(path, value) {
 }
 
 const checkedAt = new Date().toISOString();
-const today = beijingDay(Date.parse(checkedAt));
+const days = beijingDays(Date.parse(checkedAt));
 const archived = await loadArchive();
 const configured = new Set(sources.map(source => source.id));
-const byUrl = new Map(archived.filter(item => item.day === today && configured.has(item.sourceId))
+const byUrl = new Map(archived.filter(item => days.includes(item.day) && configured.has(item.sourceId))
   .map(item => [item.url, item]));
 const sourceStates = await Promise.all(sources.map(async source => {
   const { id, name, shortName, url } = source;
   try {
-    const records = await collect(source, today);
+    const records = await collect(source, days);
     for (const record of records) {
       const previous = byUrl.get(record.url);
       byUrl.set(record.url, previous ? {
@@ -59,7 +59,9 @@ const sourceStates = await Promise.all(sources.map(async source => {
   }
 }));
 
-const items = [...byUrl.values()].sort((first, second) => first.sourceId.localeCompare(second.sourceId));
+const items = [...byUrl.values()].sort(
+  (first, second) => second.day.localeCompare(first.day) || first.sourceId.localeCompare(second.sourceId)
+);
 const key = process.env.DEEPSEEK_API_KEY?.trim();
 const model = process.env.DEEPSEEK_MODEL?.trim() || "deepseek-flash";
 const analysisService = process.env.ANALYSIS_SERVICE_URL?.trim();

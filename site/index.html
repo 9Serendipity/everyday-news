@@ -4,12 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f4f5f9">
-  <meta name="description" content="政策雷达汇集当天发布的官方政策、监管动态和产业新闻，提供简报与原文链接。">
+  <meta name="description" content="政策雷达汇集今天和昨天发布的官方政策、监管动态和产业新闻，提供简报与原文链接。">
   <title>政策雷达 · 政策与市场观察</title>
   <link rel="icon" href="./favicon.png" type="image/png">
-  <link rel="stylesheet" href="./style.css?v=5">
+  <link rel="stylesheet" href="./style.css?v=6">
   <script defer src="./feed-data.js"></script>
-  <script defer src="./app.js?v=6"></script>
+  <script defer src="./app.js?v=7"></script>
 </head>
 <body>
   <a class="skip-link" href="#main">跳至内容</a>
@@ -20,7 +20,7 @@
         <span>政策雷达</span>
       </a>
       <nav class="nav" aria-label="主导航">
-        <a href="#overview" data-view="overview" aria-current="page">今日资讯</a>
+        <a href="#overview" data-view="overview" aria-current="page">近两日资讯</a>
         <a href="#sources" data-view="sources">信源</a>
       </nav>
       <span id="feed-mode" class="mode"></span>
@@ -30,10 +30,10 @@
   <main class="shell main" id="main">
     <section class="hero" id="home-hero" aria-labelledby="hero-title">
       <div class="hero-copy">
-        <p class="hero-date"><span class="calendar-icon" aria-hidden="true"></span><time id="hero-day"></time></p>
+        <p class="hero-date"><span class="calendar-icon" aria-hidden="true"></span><span id="hero-range"></span></p>
         <h1 id="hero-title">政策与市场观察</h1>
         <p class="hero-description">追踪官方政策、监管动态与产业新闻。</p>
-        <button type="button" class="button button-accent" data-brief>查看当日简报</button>
+        <button type="button" class="button button-accent" data-brief>查看两日简报</button>
       </div>
       <div class="hero-art" aria-hidden="true">
         <div class="radar">
@@ -47,7 +47,7 @@
     </section>
 
     <section class="metrics" id="metrics" aria-label="收录和分析概况">
-      <div class="metric"><span class="metric-label">今日收录</span><strong id="metric-total"></strong></div>
+      <div class="metric"><span class="metric-label">两日收录</span><strong id="metric-total"></strong></div>
       <div class="metric"><span class="metric-label">官方信源</span><strong id="metric-sources"></strong></div>
       <div class="metric"><span class="metric-label" id="analysis-label">AI 解读</span><strong id="metric-analysis"></strong></div>
     </section>
@@ -55,7 +55,7 @@
     <div class="workspace" id="workspace">
       <section id="feed-pane" aria-labelledby="feed-heading">
         <header class="section-heading">
-          <h2 id="feed-heading">今日快讯</h2>
+          <h2 id="feed-heading">近两日快讯</h2>
           <div class="feed-actions">
             <span id="result-count" class="count" aria-live="polite"></span>
             <button type="button" id="refresh-feed" class="button button-subtle">刷新资讯</button>
@@ -78,7 +78,7 @@
 
       <aside class="sidebar" id="home-sidebar" aria-label="简报和信源">
         <section class="brief-card" aria-labelledby="brief-title">
-          <div class="side-heading"><h2 id="brief-title">当日简报</h2><time id="brief-day"></time></div>
+          <div class="side-heading"><h2 id="brief-title">两日简报</h2><span class="brief-range" id="brief-range"></span></div>
           <ul id="brief-list" class="brief-list"></ul>
           <button type="button" class="side-action" data-brief>查看完整简报</button>
         </section>

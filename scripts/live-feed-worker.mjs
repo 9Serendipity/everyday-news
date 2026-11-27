@@ -1,4 +1,4 @@
-import { beijingDay, collect, sources } from "./sources.mjs";
+import { beijingDays, collect, sources } from "./sources.mjs";
 import { analyzeWithTicket, prepareAnalyses } from "./article-analysis.mjs";
 
 const origin = "https://9serendipity.github.io";
@@ -8,15 +8,15 @@ const apiHeaders = { ...cors, "Cache-Control": "no-store" };
 
 async function latestFeed(url, context) {
   const checkedAt = new Date().toISOString();
-  const today = beijingDay(Date.parse(checkedAt));
+  const days = beijingDays(Date.parse(checkedAt));
   const cache = globalThis.caches?.default;
   const cacheUrl = new URL("/latest", url);
-  cacheUrl.searchParams.set("day", today);
+  cacheUrl.searchParams.set("from", days[0]);
   const cacheKey = new Request(cacheUrl);
   const cached = await cache?.match(cacheKey).catch(() => undefined);
   if (cached) return cached;
 
-  const results = await Promise.allSettled(sources.map(source => collect(source, today)));
+  const results = await Promise.allSettled(sources.map(source => collect(source, days)));
   for (const [index, result] of results.entries()) {
     if (result.status === "rejected") console.warn(sources[index].id + " 查询失败", result.reason?.message);
   }
@@ -37,7 +37,7 @@ async function latestFeed(url, context) {
 }
 
 async function analysisTickets(url, db, context) {
-  const today = beijingDay();
+  const days = beijingDays();
   const ids = [...new Set((url.searchParams.get("ids") ?? "").split(","))];
   if (ids.length > 50 || !ids.every(id => /^[a-f0-9]{16}$/.test(id))) {
     return Response.json({ error: "invalid article ids" }, { status: 400, headers: apiHeaders });
@@ -45,11 +45,11 @@ async function analysisTickets(url, db, context) {
   const archived = await fetch(archiveUrl, { redirect: "manual", signal: AbortSignal.timeout(8_000) });
   if (!archived.ok) throw new Error("无法读取资讯归档");
   const catalog = new Map((await archived.json()).items
-    .filter(item => item.day === today).map(item => [item.id, item]));
+    .filter(item => days.includes(item.day)).map(item => [item.id, item]));
   if (ids.some(id => !catalog.has(id))) {
     const latest = await latestFeed(url, context);
     for (const item of (await latest.json()).items) {
-      if (item.day === today && !catalog.has(item.id)) catalog.set(item.id, item);
+      if (days.includes(item.day) && !catalog.has(item.id)) catalog.set(item.id, item);
     }
   }
   const items = ids.map(id => catalog.get(id)).filter(Boolean);

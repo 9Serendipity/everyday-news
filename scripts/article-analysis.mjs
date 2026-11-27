@@ -1,5 +1,5 @@
 import { analyze } from "./deepseek.mjs";
-import { beijingDay, readArticle } from "./sources.mjs";
+import { beijingDays, readArticle } from "./sources.mjs";
 
 const hour = 60 * 60_000;
 const maxAttempts = 50;
@@ -45,7 +45,7 @@ export async function analyzeWithTicket(db, ticket, settings) {
   if (!job) return { state: "unknown" };
   const now = Date.now();
   const item = JSON.parse(job.article_json);
-  if (item.day !== beijingDay(now)) return { state: "deferred" };
+  if (!beijingDays(now).includes(item.day)) return { state: "deferred" };
   const status = jobStatus(job, now);
   if (status.state !== "waiting") return status;
 
