@@ -4,12 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f4f5f9">
-  <meta name="description" content="政策雷达汇集官方政策、监管动态和产业新闻，提供可检索的资讯库、每日简报和原文链接。">
+  <meta name="description" content="政策雷达汇集当天发布的官方政策、监管动态和产业新闻，提供简报与原文链接。">
   <title>政策雷达 · 政策与市场观察</title>
   <link rel="icon" href="./favicon.png" type="image/png">
-  <link rel="stylesheet" href="./style.css?v=4">
+  <link rel="stylesheet" href="./style.css?v=5">
   <script defer src="./feed-data.js"></script>
-  <script defer src="./app.js?v=5"></script>
+  <script defer src="./app.js?v=6"></script>
 </head>
 <body>
   <a class="skip-link" href="#main">跳至内容</a>
@@ -20,8 +20,7 @@
         <span>政策雷达</span>
       </a>
       <nav class="nav" aria-label="主导航">
-        <a href="#overview" data-view="overview" aria-current="page">资讯总览</a>
-        <a href="#archive" data-view="archive">资讯库</a>
+        <a href="#overview" data-view="overview" aria-current="page">今日资讯</a>
         <a href="#sources" data-view="sources">信源</a>
       </nav>
       <span id="feed-mode" class="mode"></span>
@@ -48,21 +47,15 @@
     </section>
 
     <section class="metrics" id="metrics" aria-label="收录和分析概况">
-      <div class="metric"><span class="metric-label">收录资讯</span><strong id="metric-total"></strong></div>
-      <div class="metric"><span class="metric-label">最新一日</span><strong id="metric-day"></strong></div>
+      <div class="metric"><span class="metric-label">今日收录</span><strong id="metric-total"></strong></div>
       <div class="metric"><span class="metric-label">官方信源</span><strong id="metric-sources"></strong></div>
       <div class="metric"><span class="metric-label" id="analysis-label">AI 解读</span><strong id="metric-analysis"></strong></div>
     </section>
 
-    <header class="page-heading" id="archive-heading" hidden>
-      <h1>资讯库</h1>
-      <p>按日期、来源或主题查阅已收录的官方发布。</p>
-    </header>
-
     <div class="workspace" id="workspace">
       <section id="feed-pane" aria-labelledby="feed-heading">
         <header class="section-heading">
-          <h2 id="feed-heading">政策快讯</h2>
+          <h2 id="feed-heading">今日快讯</h2>
           <div class="feed-actions">
             <span id="result-count" class="count" aria-live="polite"></span>
             <button type="button" id="refresh-feed" class="button button-subtle">刷新资讯</button>
@@ -77,7 +70,6 @@
           </label>
           <label class="select-field"><span class="sr-only">信源</span><select id="source-filter"></select></label>
           <label class="select-field"><span class="sr-only">主题</span><select id="category-filter"></select></label>
-          <label class="select-field" id="date-field" hidden><span class="sr-only">日期</span><select id="date-filter"></select></label>
         </div>
         <div class="feed-list" id="feed-list"></div>
         <button type="button" id="load-more" class="button button-subtle load-more" hidden>加载更多</button>

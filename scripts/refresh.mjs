@@ -2,11 +2,10 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { requestAnalyses } from "../site/analysis-client.js";
 import { analyze } from "./deepseek.mjs";
-import { collect, readArticle, sources } from "./sources.mjs";
+import { beijingDay, collect, readArticle, sources } from "./sources.mjs";
 
 const archivePath = process.env.FEED_ARCHIVE_PATH || ".feed/archive.json";
 const outputPath = process.env.FEED_OUTPUT_PATH || "site/feed-data.js";
-const maxItems = 450;
 const detailLimit = 24;
 const maximumAnalysisLimit = 50;
 const analysisConcurrency = 4;
@@ -35,13 +34,15 @@ async function writeAtomic(path, value) {
 }
 
 const checkedAt = new Date().toISOString();
+const today = beijingDay(Date.parse(checkedAt));
 const archived = await loadArchive();
 const configured = new Set(sources.map(source => source.id));
-const byUrl = new Map(archived.filter(item => configured.has(item.sourceId)).map(item => [item.url, item]));
+const byUrl = new Map(archived.filter(item => item.day === today && configured.has(item.sourceId))
+  .map(item => [item.url, item]));
 const sourceStates = await Promise.all(sources.map(async source => {
   const { id, name, shortName, url } = source;
   try {
-    const records = await collect(source);
+    const records = await collect(source, today);
     for (const record of records) {
       const previous = byUrl.get(record.url);
       byUrl.set(record.url, previous ? {
@@ -58,70 +59,64 @@ const sourceStates = await Promise.all(sources.map(async source => {
   }
 }));
 
-const items = [...byUrl.values()]
-  .sort((first, second) => second.day.localeCompare(first.day) || first.sourceId.localeCompare(second.sourceId))
-  .slice(0, maxItems);
-if (!items.length) {
-  console.warn("未取得官方资讯，部署将继续使用随源码附带的演示快照。");
-} else {
-  const key = process.env.DEEPSEEK_API_KEY?.trim();
-  const model = process.env.DEEPSEEK_MODEL?.trim() || "deepseek-flash";
-  const analysisService = process.env.ANALYSIS_SERVICE_URL?.trim();
-  const aiEnabled = Boolean(analysisService || key);
-  const toAnalyze = aiEnabled && analysisLimit > 0 ? items.filter(item => !item.analysis) : [];
-  const localAnalyses = analysisService ? [] : toAnalyze;
-  console.log("本次 DeepSeek 解读上限 " + analysisLimit + " 条。");
-  const needsDetail = new Map([...localAnalyses, ...items.filter(item => !item.excerpt)].map(item => [item.id, item]));
-  const contextLimit = Math.min(localAnalyses.length, analysisLimit * 2);
-  const detailItems = [...needsDetail.values()].slice(0, Math.max(detailLimit, contextLimit));
-  const articleTexts = new Map();
+const items = [...byUrl.values()].sort((first, second) => first.sourceId.localeCompare(second.sourceId));
+const key = process.env.DEEPSEEK_API_KEY?.trim();
+const model = process.env.DEEPSEEK_MODEL?.trim() || "deepseek-flash";
+const analysisService = process.env.ANALYSIS_SERVICE_URL?.trim();
+const aiEnabled = Boolean(analysisService || key);
+const toAnalyze = aiEnabled && analysisLimit > 0 ? items.filter(item => !item.analysis) : [];
+const localAnalyses = analysisService ? [] : toAnalyze;
+console.log("本次 DeepSeek 解读上限 " + analysisLimit + " 条。");
+const needsDetail = new Map([...localAnalyses, ...items.filter(item => !item.excerpt)].map(item => [item.id, item]));
+const contextLimit = Math.min(localAnalyses.length, analysisLimit * 2);
+const detailItems = [...needsDetail.values()].slice(0, Math.max(detailLimit, contextLimit));
+const articleTexts = new Map();
 
-  for (let start = 0; start < detailItems.length; start += 5) {
-    await Promise.all(detailItems.slice(start, start + 5).map(async item => {
-      try {
-        const article = await readArticle(item);
-        if (!article) return;
-        articleTexts.set(item.id, article);
-        const first = article.split("\n")[0];
-        item.excerpt = first.length > 88 ? first.slice(0, 88) + "…" : first;
-      } catch {
-        console.warn("暂时无法读取原文：" + item.id);
-      }
-    }));
-  }
-
-  if (analysisService && toAnalyze.length) {
-    const pending = new Map(toAnalyze.slice(0, analysisLimit).map(item => [item.id, item]));
+for (let start = 0; start < detailItems.length; start += 5) {
+  await Promise.all(detailItems.slice(start, start + 5).map(async item => {
     try {
-      await requestAnalyses(analysisService, [...pending.keys()], results => {
-        for (const { id, analysis } of results) {
-          const item = pending.get(id);
-          if (item) item.analysis = analysis;
-        }
-      });
-    } catch (error) {
-      console.warn("解读稍后更新：" + error.message);
+      const article = await readArticle(item);
+      if (!article) return;
+      articleTexts.set(item.id, article);
+      const first = article.split("\n")[0];
+      item.excerpt = first.length > 88 ? first.slice(0, 88) + "…" : first;
+    } catch {
+      console.warn("暂时无法读取原文：" + item.id);
     }
-  }
-  const readyToAnalyze = localAnalyses.filter(item => articleTexts.has(item.id)).slice(0, analysisLimit);
-  for (let start = 0; start < readyToAnalyze.length; start += analysisConcurrency) {
-    const batch = readyToAnalyze.slice(start, start + analysisConcurrency);
-    const stopBeforeNextBatch = await Promise.all(batch.map(async item => {
-      try {
-        item.analysis = await analyze(item, articleTexts.get(item.id), { key, model });
-        return false;
-      } catch (error) {
-        console.warn("解读暂缓：" + item.id + "，" + error.message);
-        return /HTTP (401|402|403|429)/.test(error.message);
-      }
-    }));
-    if (stopBeforeNextBatch.includes(true)) break;
-  }
-
-  const archive = { items };
-  const workflowRunId = Number(process.env.GITHUB_RUN_ID) || undefined;
-  const snapshot = { mode: "live", generatedAt: checkedAt, workflowRunId, aiEnabled, sources: sourceStates, items };
-  await writeAtomic(archivePath, JSON.stringify(archive, null, 2) + "\n");
-  await writeAtomic(outputPath, "window.POLICY_FEED = " + JSON.stringify(snapshot, null, 2) + ";\n");
-  console.log("已生成发布数据，归档共 " + items.length + " 条。");
+  }));
 }
+
+if (analysisService && toAnalyze.length) {
+  const pending = new Map(toAnalyze.slice(0, analysisLimit).map(item => [item.id, item]));
+  try {
+    await requestAnalyses(analysisService, [...pending.keys()], results => {
+      for (const { id, analysis } of results) {
+        const item = pending.get(id);
+        if (item) item.analysis = analysis;
+      }
+    });
+  } catch (error) {
+    console.warn("解读稍后更新：" + error.message);
+  }
+}
+const readyToAnalyze = localAnalyses.filter(item => articleTexts.has(item.id)).slice(0, analysisLimit);
+for (let start = 0; start < readyToAnalyze.length; start += analysisConcurrency) {
+  const batch = readyToAnalyze.slice(start, start + analysisConcurrency);
+  const stopBeforeNextBatch = await Promise.all(batch.map(async item => {
+    try {
+      item.analysis = await analyze(item, articleTexts.get(item.id), { key, model });
+      return false;
+    } catch (error) {
+      console.warn("解读暂缓：" + item.id + "，" + error.message);
+      return /HTTP (401|402|403|429)/.test(error.message);
+    }
+  }));
+  if (stopBeforeNextBatch.includes(true)) break;
+}
+
+const archive = { items };
+const workflowRunId = Number(process.env.GITHUB_RUN_ID) || undefined;
+const snapshot = { mode: "live", generatedAt: checkedAt, workflowRunId, aiEnabled, sources: sourceStates, items };
+await writeAtomic(archivePath, JSON.stringify(archive, null, 2) + "\n");
+await writeAtomic(outputPath, "window.POLICY_FEED = " + JSON.stringify(snapshot, null, 2) + ";\n");
+console.log("已生成发布数据，归档共 " + items.length + " 条。");

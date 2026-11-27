@@ -35,9 +35,12 @@ export const sources = [
   }
 ];
 
-const listLimit = 12;
 const contextLimit = 4200;
 const encoder = new TextEncoder();
+
+export function beijingDay(time = Date.now()) {
+  return new Date(time + 8 * 60 * 60_000).toISOString().slice(0, 10);
+}
 
 function clean(value) {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
@@ -94,8 +97,7 @@ function rssRows(body) {
     const entry = $(element);
     const link = clean(entry.find("link").text());
     const published = Date.parse(entry.find("pubDate").text());
-    const day = Number.isFinite(published)
-      ? new Date(published + 8 * 60 * 60_000).toISOString().slice(0, 10) : "";
+    const day = Number.isFinite(published) ? beijingDay(published) : "";
     const url = link.startsWith("www.pbc.gov.cn/") ? "https://" + link : link;
     return [url, entry.find("title").text(), day];
   });
@@ -106,28 +108,30 @@ async function articleId(url) {
   return Array.from(new Uint8Array(hash, 0, 8), byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function collectEntries(rows, source) {
+async function collectEntries(rows, source, today) {
   const entries = new Map();
+  let recognized = false;
   for (const [rawUrl, rawTitle, rawDate] of rows) {
     const url = canonical(rawUrl, source);
     const title = clean(rawTitle).slice(0, 240);
     const day = chinaDay(rawDate);
-    if (!url || !title || !day || entries.has(url)) continue;
+    if (!url || !title || !day) continue;
+    recognized = true;
+    if (day !== today || entries.has(url)) continue;
     entries.set(url, { sourceId: source.id, title, day, url, category: source.category, excerpt: "" });
-    if (entries.size >= listLimit) break;
   }
-  if (!entries.size) throw new Error("未识别到带日期的文章");
+  if (!recognized) throw new Error("未识别到带日期的文章");
   return Promise.all([...entries.values()].map(async item => ({ id: await articleId(item.url), ...item })));
 }
 
-export async function collect(source) {
+export async function collect(source, today = beijingDay()) {
   try {
     const body = await download(source.endpoint ?? source.url);
     const rows = source.decode ? source.decode(body) : htmlRows(body, source);
-    return await collectEntries(rows, source);
+    return await collectEntries(rows, source, today);
   } catch (error) {
     if (!source.fallbackRss) throw error;
-    return collectEntries(rssRows(await download(source.fallbackRss)), source);
+    return collectEntries(rssRows(await download(source.fallbackRss)), source, today);
   }
 }
 

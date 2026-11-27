@@ -1,4 +1,4 @@
-import { collect, sources } from "./sources.mjs";
+import { beijingDay, collect, sources } from "./sources.mjs";
 import { analyzeWithTicket, prepareAnalyses } from "./article-analysis.mjs";
 
 const origin = "https://9serendipity.github.io";
@@ -7,13 +7,16 @@ const archiveUrl = "https://raw.githubusercontent.com/9Serendipity/everyday-news
 const apiHeaders = { ...cors, "Cache-Control": "no-store" };
 
 async function latestFeed(url, context) {
+  const checkedAt = new Date().toISOString();
+  const today = beijingDay(Date.parse(checkedAt));
   const cache = globalThis.caches?.default;
-  const cacheKey = new Request(new URL("/latest", url));
+  const cacheUrl = new URL("/latest", url);
+  cacheUrl.searchParams.set("day", today);
+  const cacheKey = new Request(cacheUrl);
   const cached = await cache?.match(cacheKey).catch(() => undefined);
   if (cached) return cached;
 
-  const checkedAt = new Date().toISOString();
-  const results = await Promise.allSettled(sources.map(collect));
+  const results = await Promise.allSettled(sources.map(source => collect(source, today)));
   for (const [index, result] of results.entries()) {
     if (result.status === "rejected") console.warn(sources[index].id + " 查询失败", result.reason?.message);
   }
@@ -23,7 +26,7 @@ async function latestFeed(url, context) {
   const items = results.flatMap(result => result.status === "fulfilled" ? result.value : []);
   const allSourcesAvailable = sourceStates.every(source => source.status === "ok");
   const response = Response.json({ checkedAt, sources: sourceStates, items }, {
-    status: items.length > 0 ? 200 : 503,
+    status: sourceStates.some(source => source.status === "ok") ? 200 : 503,
     headers: {
       ...cors,
       "Cache-Control": allSourcesAvailable ? "public, max-age=60" : "no-store"
@@ -34,17 +37,19 @@ async function latestFeed(url, context) {
 }
 
 async function analysisTickets(url, db, context) {
+  const today = beijingDay();
   const ids = [...new Set((url.searchParams.get("ids") ?? "").split(","))];
   if (ids.length > 50 || !ids.every(id => /^[a-f0-9]{16}$/.test(id))) {
     return Response.json({ error: "invalid article ids" }, { status: 400, headers: apiHeaders });
   }
   const archived = await fetch(archiveUrl, { redirect: "manual", signal: AbortSignal.timeout(8_000) });
   if (!archived.ok) throw new Error("无法读取资讯归档");
-  const catalog = new Map((await archived.json()).items.map(item => [item.id, item]));
+  const catalog = new Map((await archived.json()).items
+    .filter(item => item.day === today).map(item => [item.id, item]));
   if (ids.some(id => !catalog.has(id))) {
     const latest = await latestFeed(url, context);
     for (const item of (await latest.json()).items) {
-      if (!catalog.has(item.id)) catalog.set(item.id, item);
+      if (item.day === today && !catalog.has(item.id)) catalog.set(item.id, item);
     }
   }
   const items = ids.map(id => catalog.get(id)).filter(Boolean);

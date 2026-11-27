@@ -84,7 +84,7 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
 .point-two { top: 64%; left: 24%; width: 5px; height: 5px; background: #bbcbf1; box-shadow: 0 0 0 5px #bbcbf129; }
 .point-three { top: 72%; left: 73%; width: 5px; height: 5px; background: #bbcbf1; box-shadow: 0 0 0 5px #bbcbf129; }
 
-.metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-block: 16px 32px; }
+.metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-block: 16px 32px; }
 .metric { display: flex; flex-direction: column; gap: 3px; min-height: 96px; padding: 13px 19px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); box-shadow: var(--shadow); }
 .metric-label { color: var(--muted); font-size: .9rem; font-weight: 600; }
 .metric strong { font-size: 1.82rem; line-height: 1.25; font-weight: 750; font-variant-numeric: tabular-nums; letter-spacing: -.035em; }
@@ -92,7 +92,6 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
 .page-heading h1 { font-size: clamp(1.9rem, 4vw, 2.75rem); font-weight: 760; line-height: 1.2; letter-spacing: -.035em; }
 .page-heading p { margin-top: 8px; color: var(--muted); }
 .workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(290px, 32%); gap: 24px; }
-.workspace.archive { grid-template-columns: minmax(0, 1fr); }
 .section-heading, .side-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; }
 .section-heading { margin-bottom: 11px; }
 .section-heading h2 { font-size: 1.45rem; line-height: 1.3; letter-spacing: -.025em; }
@@ -192,7 +191,7 @@ body:has(.detail-dialog[open]) { overflow: hidden; }
   .hero-art { position: absolute; z-index: 0; inset: 0; opacity: .38; mask-image: linear-gradient(90deg, transparent 35%, #000 90%); }
   .radar { right: -70px; }
   .hero-description { max-width: 255px; }
-  .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-block: 9px 24px; }
+  .metrics { gap: 8px; margin-block: 9px 24px; }
   .metric { min-height: 74px; padding: 8px 12px; }
   .metric strong { font-size: 1.57rem; }
   .workspace { grid-template-columns: minmax(0, 1fr); gap: 20px; }
