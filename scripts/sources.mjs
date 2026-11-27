@@ -3,6 +3,21 @@ import { load } from "cheerio/slim";
 const government = "https://www.gov.cn/zhengce/zuixin/";
 const csrc = "https://www.csrc.gov.cn/csrc/c100028/common_xq_list.shtml?tab=02";
 const csrcList = "https://www.csrc.gov.cn/searchList/a1a078ee0bc54721ab6b148884c784a8?_isAgg=true&_isJson=true&_pageSize=18&_template=index&_rangeTimeGte=&_channelName=&page=1";
+const miit = "https://www.miit.gov.cn/zwgk/zcwj/wjfb/tz/index.html";
+const miitNotices = new URL("/api-gateway/jpaas-publish-server/front/page/build/unit", miit);
+miitNotices.search = new URLSearchParams({
+  parseType: "buildstatic",
+  webId: "8d828e408d90447786ddbe128d495e9e",
+  tplSetId: "209741b2109044b5b7695700b2bec37e",
+  pageType: "column",
+  tagId: "右侧内容",
+  editType: "null",
+  pageId: "3e3ad1a3bec74939890a0d3e54815141"
+});
+const nfra = "https://www.nfra.gov.cn";
+const nfraPolicyItem = "928";
+const nfraDetailPath = "/cn/view/pages/ItemDetail.html";
+const nfraDocuments = nfra + "/cn/static/data/DocInfo/";
 
 export const sources = [
   {
@@ -32,6 +47,35 @@ export const sources = [
     id: "nda", name: "国家数据局", shortName: "国家数据局", category: "数字经济",
     url: "https://www.nda.gov.cn/sjj/zwgk/tzgg/list/index_pc_1.html",
     list: "li a[href^='/sjj/zwgk/tzgg/'][href$='_pc.html']", date: "span", article: ".article"
+  },
+  {
+    id: "miit", name: "工业和信息化部", shortName: "工信部", category: "产业政策", url: miit,
+    endpoint: miitNotices.href,
+    list: "li > a[href^='/zwgk/zcwj/wjfb/tz/art/']", date: "span.fr", article: "#con_con",
+    decode: (body, source) => {
+      const $ = load(JSON.parse(body).data.html);
+      $("span.fr .jd").remove();
+      return htmlRows($, source);
+    }
+  },
+  {
+    id: "nbs", name: "国家统计局", shortName: "国家统计局", category: "宏观数据",
+    url: "https://www.stats.gov.cn/sj/zxfb/",
+    list: ".list-content li a[href*='/t20'][title]", date: "span", article: ".trs_editor_view"
+  },
+  {
+    id: "nfra", name: "国家金融监督管理总局", shortName: "金融监管总局", category: "金融监管",
+    url: nfra + "/cn/view/pages/ItemList.html?itemId=" + nfraPolicyItem + "&itemPId=923&itemUrl=ItemListRightList.html",
+    endpoint: nfraDocuments + "SelectDocByItemIdAndChild/data_itemId=" + nfraPolicyItem + ",pageIndex=1,pageSize=18.json",
+    decode: body => JSON.parse(body).data.rows.map(row => [
+      nfraArticleUrl(row.docId, row.generaltype), row.docSubtitle, row.publishDate
+    ]),
+    canonicalArticle: url => url.pathname === nfraDetailPath
+      ? nfraArticleUrl(url.searchParams.get("docId"), url.searchParams.get("generaltype"))
+      : "",
+    articleEndpoint: url => nfraDocuments + "SelectByDocId/data_docId=" + url.searchParams.get("docId") + ".json",
+    articleMarkup: body => JSON.parse(body).data.docClob ?? "",
+    article: "body"
   }
 ];
 
@@ -58,6 +102,12 @@ function chinaDay(value) {
   return !Number.isNaN(date.valueOf()) && date.toISOString().startsWith(day) ? day : "";
 }
 
+function nfraArticleUrl(docId, generaltype) {
+  if (!/^\d+$/.test(docId) || !/^\d$/.test(generaltype)) return "";
+  const query = new URLSearchParams({ docId, itemId: nfraPolicyItem, generaltype });
+  return nfra + nfraDetailPath + "?" + query;
+}
+
 function canonical(raw, source) {
   if (!clean(raw)) return "";
   try {
@@ -65,6 +115,7 @@ function canonical(raw, source) {
     if (url.protocol === "http:") url.protocol = "https:";
     const origin = new URL(source.url).origin;
     if (url.origin !== origin || url.username || url.password) return "";
+    if (source.canonicalArticle) return source.canonicalArticle(url);
     url.search = "";
     url.hash = "";
     return url.href;
@@ -86,8 +137,7 @@ async function download(url) {
   return response.text();
 }
 
-function htmlRows(html, source) {
-  const $ = load(html);
+function htmlRows($, source) {
   return $(source.list).toArray().map(element => {
     const anchor = $(element);
     const container = anchor.closest(source.container ?? "li");
@@ -131,7 +181,7 @@ async function collectEntries(rows, source, days) {
 export async function collect(source, days = beijingDays()) {
   try {
     const body = await download(source.endpoint ?? source.url);
-    const rows = source.decode ? source.decode(body) : htmlRows(body, source);
+    const rows = source.decode ? source.decode(body, source) : htmlRows(load(body), source);
     return await collectEntries(rows, source, days);
   } catch (error) {
     if (!source.fallbackRss) throw error;
@@ -142,7 +192,8 @@ export async function collect(source, days = beijingDays()) {
 export async function readArticle(item) {
   const source = sources.find(entry => entry.id === item.sourceId);
   if (!source || canonical(item.url, source) !== item.url) return "";
-  const $ = load(await download(item.url));
+  const body = await download(source.articleEndpoint ? source.articleEndpoint(new URL(item.url)) : item.url);
+  const $ = load(source.articleMarkup ? source.articleMarkup(body) : body);
   const section = $(source.article).first();
   if (!section.length) return "";
   section.find("script,style,iframe,video,noscript,form,[hidden]").remove();
