@@ -9,6 +9,7 @@ const outputPath = process.env.FEED_OUTPUT_PATH || "site/feed-data.js";
 const detailLimit = 24;
 const maximumAnalysisLimit = 50;
 const analysisConcurrency = 4;
+const analysisService = process.env.ANALYSIS_SERVICE_URL?.trim();
 const requestedLimit = process.env.DEEPSEEK_ANALYSIS_LIMIT?.trim();
 const analysisLimit = requestedLimit ? Number(requestedLimit) : maximumAnalysisLimit;
 if (!Number.isInteger(analysisLimit) || analysisLimit < 0 || analysisLimit > maximumAnalysisLimit) {
@@ -33,38 +34,63 @@ async function writeAtomic(path, value) {
   await rename(pending, path);
 }
 
+async function loadLiveFeed(service, days) {
+  const response = await fetch(new URL("/latest", service), {
+    redirect: "error",
+    signal: AbortSignal.timeout(15_000)
+  });
+  if (!response.ok) throw new Error("HTTP " + response.status);
+  const feed = await response.json();
+  const checkedTime = Date.parse(feed.checkedAt);
+  if (!Number.isFinite(checkedTime) || beijingDays(checkedTime)[1] !== days[1]
+    || !Array.isArray(feed.sources) || !Array.isArray(feed.items)) {
+    throw new Error("实时资讯与本次采集日期不一致或数据格式有误");
+  }
+  return feed;
+}
+
 const checkedAt = new Date().toISOString();
 const days = beijingDays(Date.parse(checkedAt));
 const archived = await loadArchive();
 const configured = new Set(sources.map(source => source.id));
 const byUrl = new Map(archived.filter(item => days.includes(item.day) && configured.has(item.sourceId))
   .map(item => [item.url, item]));
-const sourceStates = await Promise.all(sources.map(async source => {
+const directResults = await Promise.allSettled(sources.map(source => collect(source, days)));
+const liveFeed = analysisService && directResults.some(result => result.status === "rejected")
+  ? await loadLiveFeed(analysisService, days).catch(error => {
+    console.warn("实时服务补采失败：" + error.message);
+    return null;
+  })
+  : null;
+const liveAvailable = new Set(liveFeed?.sources.filter(source => source.status === "ok").map(source => source.id));
+const sourceStates = sources.map((source, index) => {
   const { id, name, shortName, url } = source;
-  try {
-    const records = await collect(source, days);
-    for (const record of records) {
-      const previous = byUrl.get(record.url);
-      byUrl.set(record.url, previous ? {
-        ...record,
-        excerpt: previous.excerpt ?? "",
-        ...(previous.title === record.title && previous.analysis ? { analysis: previous.analysis } : {})
-      } : record);
-    }
-    console.log(shortName + "：" + records.length + " 条");
-    return { id, name, shortName, url, status: "ok", checkedAt };
-  } catch (error) {
-    console.warn(shortName + "采集失败：" + error.message);
+  const result = directResults[index];
+  if (result.status === "rejected" && !liveAvailable.has(id)) {
+    console.warn(shortName + "采集失败：" + result.reason.message);
     return { id, name, shortName, url, status: "error", checkedAt };
   }
-}));
+  const records = result.status === "fulfilled"
+    ? result.value
+    : liveFeed.items.filter(item => item.sourceId === id && days.includes(item.day));
+  for (const record of records) {
+    const previous = byUrl.get(record.url);
+    byUrl.set(record.url, previous ? {
+      ...record,
+      excerpt: previous.excerpt ?? "",
+      ...(previous.title === record.title && previous.analysis ? { analysis: previous.analysis } : {})
+    } : record);
+  }
+  const label = result.status === "fulfilled" ? shortName : shortName + "（实时服务补采）";
+  console.log(label + "：" + records.length + " 条");
+  return { id, name, shortName, url, status: "ok", checkedAt };
+});
 
 const items = [...byUrl.values()].sort(
   (first, second) => second.day.localeCompare(first.day) || first.sourceId.localeCompare(second.sourceId)
 );
 const key = process.env.DEEPSEEK_API_KEY?.trim();
 const model = process.env.DEEPSEEK_MODEL?.trim() || "deepseek-flash";
-const analysisService = process.env.ANALYSIS_SERVICE_URL?.trim();
 const aiEnabled = Boolean(analysisService || key);
 const toAnalyze = aiEnabled && analysisLimit > 0 ? items.filter(item => !item.analysis) : [];
 const localAnalyses = analysisService ? [] : toAnalyze;
