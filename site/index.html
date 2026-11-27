@@ -7,9 +7,9 @@
   <meta name="description" content="政策雷达汇集官方政策、监管动态和产业新闻，提供可检索的资讯库、每日简报和原文链接。">
   <title>政策雷达 · 政策与市场观察</title>
   <link rel="icon" href="./favicon.png" type="image/png">
-  <link rel="stylesheet" href="./style.css?v=3">
+  <link rel="stylesheet" href="./style.css?v=4">
   <script defer src="./feed-data.js"></script>
-  <script defer src="./app.js?v=3"></script>
+  <script defer src="./app.js?v=4"></script>
 </head>
 <body>
   <a class="skip-link" href="#main">跳至内容</a>
@@ -65,9 +65,10 @@
           <h2 id="feed-heading">政策快讯</h2>
           <div class="feed-actions">
             <span id="result-count" class="count" aria-live="polite"></span>
-            <button type="button" id="refresh-feed" class="button button-subtle" aria-haspopup="dialog">刷新资讯</button>
+            <button type="button" id="refresh-feed" class="button button-subtle">刷新资讯</button>
           </div>
         </header>
+        <p id="refresh-feed-status" class="refresh-status" role="status"></p>
         <div class="filters">
           <label class="search">
             <span class="search-icon" aria-hidden="true"></span>

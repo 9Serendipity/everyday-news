@@ -1,5 +1,4 @@
-import { createHash } from "node:crypto";
-import { load } from "cheerio";
+import { load } from "cheerio/slim";
 
 const government = "https://www.gov.cn/zhengce/zuixin/";
 const csrc = "https://www.csrc.gov.cn/csrc/c100028/common_xq_list.shtml?tab=02";
@@ -37,6 +36,7 @@ export const sources = [
 
 const listLimit = 12;
 const contextLimit = 4200;
+const encoder = new TextEncoder();
 
 function clean(value) {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
@@ -67,7 +67,7 @@ function canonical(raw, source) {
 
 async function download(url) {
   const response = await fetch(url, {
-    redirect: "error",
+    redirect: "manual",
     signal: AbortSignal.timeout(12_000),
     headers: {
       "User-Agent": "Mozilla/5.0 (compatible; PolicyRadar/1.0)",
@@ -87,6 +87,11 @@ function htmlRows(html, source) {
   });
 }
 
+async function articleId(url) {
+  const hash = await crypto.subtle.digest("SHA-256", encoder.encode(url));
+  return Array.from(new Uint8Array(hash, 0, 8), byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
 export async function collect(source) {
   const body = await download(source.endpoint ?? source.url);
   const rows = source.decode ? source.decode(body) : htmlRows(body, source);
@@ -96,14 +101,11 @@ export async function collect(source) {
     const title = clean(rawTitle).slice(0, 240);
     const day = chinaDay(rawDate);
     if (!url || !title || !day || entries.has(url)) continue;
-    entries.set(url, {
-      id: createHash("sha256").update(url).digest("hex").slice(0, 16),
-      sourceId: source.id, title, day, url, category: source.category, excerpt: ""
-    });
+    entries.set(url, { sourceId: source.id, title, day, url, category: source.category, excerpt: "" });
     if (entries.size >= listLimit) break;
   }
   if (!entries.size) throw new Error("未识别到带日期的文章");
-  return [...entries.values()];
+  return Promise.all([...entries.values()].map(async item => ({ id: await articleId(item.url), ...item })));
 }
 
 export async function readArticle(item) {

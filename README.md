@@ -4,7 +4,7 @@
 
 ## 浏览和更新
 
-在网站点「刷新资讯」后选「立即采集」。首次连接时，在弹窗里填写仅适用于 `everyday-news` 仓库的 GitHub 细粒度访问令牌，授予 Actions **Read and write** 权限。令牌保存在当前页面内存中，网页直接请求 GitHub Actions，等待发布完成后加载结果。「检查更新」可随时读取已发布的数据。
+在网站点「刷新资讯」即可查询五个官方信源，同时载入最新发布的资讯和解读。新闻列表由 `scripts/live-feed-worker.mjs` 提供的只读接口查询，归档与 DeepSeek 解读由 GitHub Actions 定时生成。
 
 双击打开 `site/index.html`，可离线查看随源码附带的演示快照。使用 Node.js 24 运行以下命令，可在本机采集公开资讯并更新页面数据。
 

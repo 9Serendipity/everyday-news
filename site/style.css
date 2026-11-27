@@ -166,18 +166,9 @@ body:has(.detail-dialog[open]) { overflow: hidden; }
 .dialog-section p, .dialog-section li { color: var(--muted); overflow-wrap: anywhere; }
 .dialog-section ul { padding-left: 22px; }
 .dialog-body .button { margin-top: 14px; }
-.refresh-description, .refresh-status { color: var(--muted); margin-top: 10px; }
+.refresh-status { margin: 0 0 12px; color: var(--muted); font-size: .875rem; }
 .refresh-status:empty { display: none; }
-.refresh-form { margin-top: 14px; }
-.refresh-field { display: grid; gap: 4px; font-weight: 650; }
-.refresh-field small, .refresh-authorization p { color: var(--muted); font-weight: 400; }
-.refresh-field input { min-height: 42px; padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--paper); color: var(--ink); }
-.refresh-field input[type="number"] { width: 100px; }
-.refresh-authorization { margin-top: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--page); }
-.refresh-authorization p { margin-top: 7px; }
-.refresh-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
-.dialog-body .refresh-actions .button { margin-top: 0; }
-.refresh-actions button:disabled { opacity: .65; cursor: wait; }
+#refresh-feed:disabled { opacity: .65; cursor: wait; }
 .analysis-fields { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 12px; margin-top: 10px; }
 .analysis-fields dt { color: var(--ink); font-weight: 650; }
 .analysis-fields dd { color: var(--muted); overflow-wrap: anywhere; }
