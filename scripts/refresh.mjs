@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { requestAnalyses } from "../site/analysis-client.js";
 import { analyze } from "./deepseek.mjs";
 import { collect, readArticle, sources } from "./sources.mjs";
 
@@ -65,10 +66,13 @@ if (!items.length) {
 } else {
   const key = process.env.DEEPSEEK_API_KEY?.trim();
   const model = process.env.DEEPSEEK_MODEL?.trim() || "deepseek-flash";
-  const toAnalyze = key && analysisLimit > 0 ? items.filter(item => !item.analysis) : [];
+  const analysisService = process.env.ANALYSIS_SERVICE_URL?.trim();
+  const aiEnabled = Boolean(analysisService || key);
+  const toAnalyze = aiEnabled && analysisLimit > 0 ? items.filter(item => !item.analysis) : [];
+  const localAnalyses = analysisService ? [] : toAnalyze;
   console.log("本次 DeepSeek 解读上限 " + analysisLimit + " 条。");
-  const needsDetail = new Map([...toAnalyze, ...items.filter(item => !item.excerpt)].map(item => [item.id, item]));
-  const contextLimit = Math.min(toAnalyze.length, analysisLimit * 2);
+  const needsDetail = new Map([...localAnalyses, ...items.filter(item => !item.excerpt)].map(item => [item.id, item]));
+  const contextLimit = Math.min(localAnalyses.length, analysisLimit * 2);
   const detailItems = [...needsDetail.values()].slice(0, Math.max(detailLimit, contextLimit));
   const articleTexts = new Map();
 
@@ -86,7 +90,20 @@ if (!items.length) {
     }));
   }
 
-  const readyToAnalyze = toAnalyze.filter(item => articleTexts.has(item.id)).slice(0, analysisLimit);
+  if (analysisService && toAnalyze.length) {
+    const pending = new Map(toAnalyze.slice(0, analysisLimit).map(item => [item.id, item]));
+    try {
+      await requestAnalyses(analysisService, [...pending.keys()], results => {
+        for (const { id, analysis } of results) {
+          const item = pending.get(id);
+          if (item) item.analysis = analysis;
+        }
+      });
+    } catch (error) {
+      console.warn("解读稍后更新：" + error.message);
+    }
+  }
+  const readyToAnalyze = localAnalyses.filter(item => articleTexts.has(item.id)).slice(0, analysisLimit);
   for (let start = 0; start < readyToAnalyze.length; start += analysisConcurrency) {
     const batch = readyToAnalyze.slice(start, start + analysisConcurrency);
     const stopBeforeNextBatch = await Promise.all(batch.map(async item => {
@@ -103,7 +120,7 @@ if (!items.length) {
 
   const archive = { items };
   const workflowRunId = Number(process.env.GITHUB_RUN_ID) || undefined;
-  const snapshot = { mode: "live", generatedAt: checkedAt, workflowRunId, aiEnabled: Boolean(key), sources: sourceStates, items };
+  const snapshot = { mode: "live", generatedAt: checkedAt, workflowRunId, aiEnabled, sources: sourceStates, items };
   await writeAtomic(archivePath, JSON.stringify(archive, null, 2) + "\n");
   await writeAtomic(outputPath, "window.POLICY_FEED = " + JSON.stringify(snapshot, null, 2) + ";\n");
   console.log("已生成发布数据，归档共 " + items.length + " 条。");

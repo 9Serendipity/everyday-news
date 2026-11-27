@@ -23,7 +23,7 @@ function strings(value, limit) {
 export async function analyze(item, context, { key, model = "deepseek-flash", request = fetch }) {
   const response = await request(endpoint, {
     method: "POST",
-    redirect: "error",
+    redirect: "manual",
     signal: AbortSignal.timeout(24_000),
     headers: { "Content-Type": "application/json", Authorization: "Bearer " + key },
     body: JSON.stringify({

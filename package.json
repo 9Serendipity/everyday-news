@@ -6,7 +6,7 @@
   "engines": { "node": ">=22.19.0" },
   "scripts": {
     "refresh": "node scripts/refresh.mjs",
-    "check": "node --check site/app.js && node --check site/feed-data.js && node --check scripts/sources.mjs && node --check scripts/deepseek.mjs && node --check scripts/refresh.mjs && node --check scripts/live-feed-worker.mjs"
+    "check": "node --check site/app.js && node --check site/feed-data.js && node --check site/analysis-client.js && node --check scripts/sources.mjs && node --check scripts/deepseek.mjs && node --check scripts/refresh.mjs && node --check scripts/live-feed-worker.mjs && node --check scripts/article-analysis.mjs"
   },
   "dependencies": { "cheerio": "1.2.0" }
 }

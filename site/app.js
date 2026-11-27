@@ -25,6 +25,7 @@
   let pendingFeedRequest;
   let publishedFeed;
   let liveFeed;
+  const liveAnalyses = new Map();
 
   const byId = id => document.getElementById(id);
   const query = byId("query");
@@ -369,7 +370,10 @@
       if (!check || Date.parse(source.checkedAt) > Date.parse(check.checkedAt)) return source;
       return { ...source, ...check };
     });
-    const sortedItems = [...merged.values()].sort(
+    const sortedItems = [...merged.values()].map(item => {
+      const analysis = liveAnalyses.get(item.id);
+      return analysis && !item.analysis ? { ...item, analysis } : item;
+    }).sort(
       (first, second) => second.day.localeCompare(first.day) || first.sourceId.localeCompare(second.sourceId)
     );
     const generatedAt = Date.parse(publishedFeed.generatedAt) > Date.parse(liveFeed.checkedAt)
@@ -408,7 +412,26 @@
       const result = newItems ? "新增 " + count.format(newItems) + " 条资讯。" : "暂无新增资讯。";
       const unavailable = recent.sources.length - available.size;
       const partial = unavailable ? " " + count.format(unavailable) + " 个信源暂未响应。" : "";
-      refreshStatus.textContent = "已刷新。" + result + partial;
+      const message = "已刷新。" + result + partial;
+      const recentIds = new Set(recent.items.map(item => item.id));
+      const pending = items.filter(item => recentIds.has(item.id) && !item.analysis).slice(0, 50);
+      refreshStatus.textContent = message;
+      if (!pending.length) return;
+
+      refreshButton.textContent = "解读中…";
+      refreshStatus.textContent = message + " 正在解读 " + count.format(pending.length) + " 条资讯…";
+      try {
+        const { requestAnalyses } = await import("./analysis-client.js?v=1");
+        const completed = await requestAnalyses(liveFeedUrl, pending.map(item => item.id), results => {
+          for (const { id, analysis } of results) liveAnalyses.set(id, analysis);
+          showFeed(mergeFeeds());
+        });
+        const finished = completed ? " 已显示 " + count.format(completed) + " 条 AI 解读。" : "";
+        const later = completed < pending.length ? " 其余解读稍后自动更新。" : "";
+        refreshStatus.textContent = message + finished + later;
+      } catch {
+        refreshStatus.textContent = message + " AI 解读稍后自动更新。";
+      }
     } catch {
       refreshStatus.textContent = "刷新未完成，请稍后再试。";
     } finally {

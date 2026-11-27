@@ -47,8 +47,7 @@ jobs:
       - name: 采集官方新闻并生成页面数据
         run: npm run refresh
         env:
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          DEEPSEEK_MODEL: ${{ vars.DEEPSEEK_MODEL }}
+          ANALYSIS_SERVICE_URL: https://policy-radar-live-9serendipity.shadymint257.chatgpt.site
           DEEPSEEK_ANALYSIS_LIMIT: ${{ inputs.ai_limit }}
       - name: 检查网页脚本
         run: npm run check
